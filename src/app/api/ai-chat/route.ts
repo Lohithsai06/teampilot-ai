@@ -104,7 +104,11 @@ export async function POST(request: NextRequest) {
     // Resolve keys and providers
     const resolvedGeminiKey = geminiApiKey || (provider === "gemini" ? apiKey : undefined);
     const resolvedOpenRouterKey = openRouterApiKey || (provider === "openrouter" ? apiKey : undefined);
-    const resolvedPreferred = preferredProvider || provider || "gemini";
+    const resolvedPreferred = preferredProvider && preferredProvider !== "none" ? preferredProvider : "gemini";
+    const resolvedFallback = fallbackProvider && fallbackProvider !== "none" ? fallbackProvider : "openrouter";
+
+    console.log(`Selected Provider: ${resolvedPreferred}`);
+    console.log(`Fallback Provider: ${resolvedFallback}`);
 
     if (!messages || messages.length === 0) {
       return NextResponse.json(
@@ -113,26 +117,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Determine the sequence of providers to try
+    // Determine the sequence of providers to try based on user settings
     const attempts: { name: "gemini" | "openrouter"; key?: string }[] = [];
 
-    if (resolvedPreferred === "gemini") {
-      attempts.push({ name: "gemini", key: resolvedGeminiKey });
-      attempts.push({ name: "openrouter", key: resolvedOpenRouterKey });
-    } else if (resolvedPreferred === "openrouter") {
-      attempts.push({ name: "openrouter", key: resolvedOpenRouterKey });
-      attempts.push({ name: "gemini", key: resolvedGeminiKey });
-    } else {
-      attempts.push({ name: "gemini", key: resolvedGeminiKey });
-      attempts.push({ name: "openrouter", key: resolvedOpenRouterKey });
+    // Add preferred provider first
+    attempts.push({
+      name: resolvedPreferred,
+      key: resolvedPreferred === "gemini" ? resolvedGeminiKey : resolvedOpenRouterKey,
+    });
+
+    // Add fallback provider second (if it's different from the preferred provider)
+    if (resolvedFallback !== resolvedPreferred) {
+      attempts.push({
+        name: resolvedFallback,
+        key: resolvedFallback === "gemini" ? resolvedGeminiKey : resolvedOpenRouterKey,
+      });
     }
 
     let lastError: Error | null = null;
     let responseText = "";
     let usedProvider: "gemini" | "openrouter" | null = null;
 
-    for (const attempt of attempts) {
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i];
+
+      if (i > 0) {
+        console.log(`Fallback Triggered`);
+      }
+
       if (!attempt.key) {
+        console.log(`Provider Failed: ${attempt.name}`);
         lastError = new Error(`Missing API key for ${attempt.name}`);
         continue;
       }
@@ -146,12 +160,13 @@ export async function POST(request: NextRequest) {
         usedProvider = attempt.name;
         break; // Success!
       } catch (err) {
-        console.warn(`Attempt with ${attempt.name} failed:`, err);
+        console.log(`Provider Failed: ${attempt.name}`);
         lastError = err instanceof Error ? err : new Error(String(err));
       }
     }
 
     if (usedProvider && responseText) {
+      console.log(`Provider Used: ${usedProvider}`);
       return NextResponse.json({
         response: responseText,
         provider: usedProvider,

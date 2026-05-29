@@ -302,6 +302,33 @@ export default function AIWorkspacePage() {
   const [activeMode, setActiveMode] = useState<AgentMode>("architect");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Determine if fallback is active based on the last assistant message in the conversation
+  const isFallbackActive = (() => {
+    const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isLocal);
+    if (assistantMsgs.length === 0) return false;
+    const lastMsg = assistantMsgs[assistantMsgs.length - 1];
+    
+    const preferred = settings.preferredProvider && settings.preferredProvider !== "none" 
+      ? settings.preferredProvider 
+      : "gemini";
+      
+    if (lastMsg.provider) {
+      return lastMsg.provider !== preferred;
+    }
+    return false;
+  })();
+
+  const providerStatusText = (() => {
+    if (!anyProviderConfigured) return "No AI";
+    if (isFallbackActive) return "Fallback Active";
+    const preferred = settings.preferredProvider && settings.preferredProvider !== "none" 
+      ? settings.preferredProvider 
+      : "gemini";
+    if (preferred === "gemini") return "Gemini Active";
+    if (preferred === "openrouter") return "OpenRouter Active";
+    return "AI Active";
+  })();
+
   // Auto-scroll to bottom when new messages arrive or AI starts responding
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -652,7 +679,7 @@ export default function AIWorkspacePage() {
                     {anyProviderConfigured ? (
                       <>
                         <CheckCircle2 className="h-2.5 w-2.5" />
-                        {activeProvider}
+                        {providerStatusText}
                       </>
                     ) : (
                       <>
