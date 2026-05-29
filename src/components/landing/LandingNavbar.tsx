@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { Rocket, Menu } from "lucide-react";
+import { Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { motion } from "framer-motion";

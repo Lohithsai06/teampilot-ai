@@ -1,25 +1,36 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { DashboardLayout } from "@/components/common/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import {
   FolderKanban,
-  ListTodo,
-  GitBranch,
   Brain,
-  TrendingUp,
-  Clock,
   Plus,
   ArrowRight,
+  UserPlus,
+  Rocket,
+  ShieldCheck,
+  Users,
 } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useAuth } from "@/context/AuthContext";
+import { useProject } from "@/context/ProjectContext";
+import { CreateProjectModal, JoinProjectModal } from "@/components/project/ProjectModals";
+import { PendingRequests } from "@/components/project/PendingRequests";
+import Link from "next/link";
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const { projects, activeProject, userRole } = useProject();
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+
+  // Derived stats
+  const totalProjects = projects.length;
+
   return (
     <DashboardLayout>
       <motion.div
@@ -29,23 +40,51 @@ export default function DashboardPage() {
       >
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold">Welcome back, John</h1>
+            <h1 className="text-3xl font-bold">Welcome back, {user?.displayName?.split(" ")[0] || "User"}</h1>
             <p className="text-muted-foreground mt-1">
-              Here&apos;s what&apos;s happening with your projects
+              {totalProjects > 0 
+                ? `You have ${totalProjects} active project${totalProjects > 1 ? "s" : ""}`
+                : "Get started by creating or joining a project"}
             </p>
           </div>
-          <Button className="gap-2">
-            <Plus className="h-4 w-4" />
-            New Project
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" className="gap-2" onClick={() => setShowJoinModal(true)}>
+              <UserPlus className="h-4 w-4" />
+              Join Project
+            </Button>
+            <Button className="gap-2" onClick={() => setShowCreateModal(true)}>
+              <Plus className="h-4 w-4" />
+              New Project
+            </Button>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[
-            { icon: FolderKanban, label: "Total Projects", value: "12", change: "+2 this month" },
-            { icon: ListTodo, label: "Active Tasks", value: "34", change: "8 in review" },
-            { icon: GitBranch, label: "Commits", value: "156", change: "+23 this week" },
-            { icon: Brain, label: "AI Insights", value: "8", change: "3 new" },
+            { 
+              icon: FolderKanban, 
+              label: "Total Projects", 
+              value: totalProjects.toString(), 
+              change: "Across all teams" 
+            },
+            { 
+              icon: ShieldCheck, 
+              label: "Project Role", 
+              value: userRole ? (userRole.charAt(0).toUpperCase() + userRole.slice(1)) : "None", 
+              change: activeProject ? `In ${activeProject.projectName}` : "Select a project" 
+            },
+            { 
+              icon: Users, 
+              label: "Team Members", 
+              value: activeProject ? activeProject.totalMembers.toString() : "0", 
+              change: "Active in current" 
+            },
+            { 
+              icon: Brain, 
+              label: "Current Phase", 
+              value: activeProject ? `Phase ${activeProject.currentPhase}` : "-", 
+              change: activeProject ? "Project status" : "No active project" 
+            },
           ].map((stat, index) => (
             <motion.div
               key={stat.label}
@@ -69,42 +108,61 @@ export default function DashboardPage() {
           ))}
         </div>
 
+        {/* Pending Requests for Leaders */}
+        <PendingRequests />
+
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Recent Projects</CardTitle>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  View All <ArrowRight className="h-4 w-4" />
-                </Button>
+                <div>
+                  <CardTitle>Your Projects</CardTitle>
+                  <CardDescription>Recently accessed projects</CardDescription>
+                </div>
+                <Link href="/projects">
+                  <Button variant="ghost" size="sm" className="gap-1">
+                    View All <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </Link>
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {[
-                  { name: "E-commerce Platform", status: "In Progress", progress: 65 },
-                  { name: "Mobile App MVP", status: "Review", progress: 89 },
-                  { name: "Analytics Dashboard", status: "Planning", progress: 23 },
-                ].map((project) => (
-                  <div key={project.name} className="flex items-center gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-sm font-medium truncate">{project.name}</p>
-                        <Badge variant={project.status === "In Progress" ? "default" : "secondary"}>
-                          {project.status}
-                        </Badge>
+                {projects.length > 0 ? (
+                  projects.slice(0, 3).map((project) => (
+                    <div key={project.projectId} className="flex items-center gap-4 p-3 rounded-lg hover:bg-muted/50 transition-colors border border-transparent hover:border-border">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-sm font-medium truncate">{project.projectName}</p>
+                          <Badge variant={project.status === "active" ? "default" : "secondary"}>
+                            {project.status}
+                          </Badge>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>{project.projectCode}</span>
+                            <span>{project.totalMembers} members</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate">{project.projectDescription}</p>
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <progress
-                          className="h-2 w-full rounded-full bg-muted overflow-hidden [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary"
-                          value={project.progress}
-                          max={100}
-                        />
-                        <p className="text-xs text-muted-foreground">{project.progress}% complete</p>
-                      </div>
+                      <Link href="/ai-workspace">
+                        <Button size="sm" variant="outline">Open</Button>
+                      </Link>
                     </div>
+                  ))
+                ) : (
+                  <div className="py-12 flex flex-col items-center justify-center text-center space-y-4 border-2 border-dashed rounded-xl">
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Rocket className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <p className="font-semibold">No projects found</p>
+                      <p className="text-sm text-muted-foreground max-w-[200px]">Create your first project to start building.</p>
+                    </div>
+                    <Button size="sm" onClick={() => setShowCreateModal(true)}>Create Project</Button>
                   </div>
-                ))}
+                )}
               </div>
             </CardContent>
           </Card>
@@ -112,73 +170,70 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Activity Feed</CardTitle>
-                <Button variant="ghost" size="sm">
-                  <Clock className="h-4 w-4" />
-                </Button>
+                <CardTitle>Active Project</CardTitle>
+                {activeProject && (
+                  <Badge variant="outline" className="font-mono text-[10px]">
+                    {activeProject.projectCode}
+                  </Badge>
+                )}
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {[
-                  { user: "John", action: "committed to main", time: "2m ago" },
-                  { user: "Sarah", action: "completed auth module", time: "15m ago" },
-                  { user: "AI", action: "generated roadmap", time: "1h ago" },
-                  { user: "Mike", action: "created new task", time: "2h ago" },
-                ].map((activity, index) => (
-                  <div key={index} className="flex items-start gap-3 text-sm">
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>{activity.user[0]}</AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <p>
-                        <span className="font-medium">{activity.user}</span>{" "}
-                        <span className="text-muted-foreground">{activity.action}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">{activity.time}</p>
+              {activeProject ? (
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <h4 className="font-semibold text-lg">{activeProject.projectName}</h4>
+                    <p className="text-sm text-muted-foreground line-clamp-3">
+                      {activeProject.projectDescription}
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Project Progress</span>
+                      <span className="font-medium">{activeProject.currentPhase * 20}%</span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div 
+                        className="h-full bg-primary transition-all duration-500" 
+                        style={{ width: `${activeProject.currentPhase * 20}%` }}
+                      />
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  <div className="grid grid-cols-2 gap-4 pt-2">
+                    <div className="p-3 rounded-lg bg-muted/50">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Leader</p>
+                      <p className="text-sm font-medium truncate">{activeProject.leaderName}</p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-muted/50">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Members</p>
+                      <p className="text-sm font-medium">{activeProject.totalMembers}</p>
+                    </div>
+                  </div>
+
+                  <Link href="/ai-workspace" className="block">
+                    <Button className="w-full gap-2">
+                      Go to Workspace
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
+                  <p className="text-sm text-muted-foreground italic">No project selected</p>
+                  <Link href="/projects">
+                    <Button variant="link" size="sm">Select a project</Button>
+                  </Link>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Sprint Progress</CardTitle>
-              <Badge variant="success">On Track</Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Week 2 of 4</span>
-                <span className="font-medium">48% Complete</span>
-              </div>
-              <progress
-                className="h-3 w-full rounded-full bg-muted overflow-hidden [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-gradient-to-r [&::-webkit-progress-value]:from-blue-500 [&::-webkit-progress-value]:to-indigo-500"
-                value={48}
-                max={100}
-              />
-              <div className="grid grid-cols-3 gap-4 pt-2">
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-foreground">24</p>
-                  <p className="text-xs text-muted-foreground">Completed</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-primary">12</p>
-                  <p className="text-xs text-muted-foreground">In Progress</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-muted-foreground">8</p>
-                  <p className="text-xs text-muted-foreground">Todo</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Project Modals */}
+        <CreateProjectModal open={showCreateModal} onOpenChange={setShowCreateModal} />
+        <JoinProjectModal open={showJoinModal} onOpenChange={setShowJoinModal} />
       </motion.div>
     </DashboardLayout>
   );

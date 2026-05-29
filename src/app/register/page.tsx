@@ -6,7 +6,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { SignupForm } from "@/components/auth/SignupForm";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Rocket, Sparkles, Check } from "lucide-react";
+import { ArrowLeft, Rocket, Check } from "lucide-react";
 
 export default function RegisterPage() {
   return (

@@ -9,8 +9,6 @@ import {
   Users,
   GitBranch,
   Sparkles,
-  Zap,
-  Code,
   Target,
 } from "lucide-react";
 

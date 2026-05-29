@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
   Search,
   Bell,
@@ -39,7 +38,6 @@ export function Navbar({
   showActions = true,
   onMenuClick 
 }: NavbarProps) {
-  const pathname = usePathname();
   const { user, logout } = useAuth();
   const router = useRouter();
 

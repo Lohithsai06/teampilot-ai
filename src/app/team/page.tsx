@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Users, UserPlus, Mail, Shield, Code, Palette, Brain, Clock, CircleCheck as CheckCircle2, CircleAlert as AlertCircle } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
 
 const teamMembers = [
   {

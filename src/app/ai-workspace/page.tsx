@@ -5,11 +5,10 @@ import { motion } from "framer-motion";
 import { DashboardLayout } from "@/components/common/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Brain, Send, Sparkles, Copy, Check, Code, Map, Users, GitBranch, MessageSquare, Loader as Loader2, Lightbulb } from "lucide-react";
+import { Brain, Send, Sparkles, Copy, Check, Code, Map, GitBranch, Loader as Loader2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export default function AIWorkspacePage() {

@@ -3,11 +3,11 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { DashboardLayout } from "@/components/common/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Plus, GripVertical, Calendar, User, CircleAlert as AlertCircle, CircleCheck as CheckCircle2, Clock, ListFilter as Filter, MoveVertical as MoreVertical } from "lucide-react";
+import { Plus, GripVertical, Calendar, CircleAlert as AlertCircle, CircleCheck as CheckCircle2, Clock, ListFilter as Filter, MoveVertical as MoreVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -104,7 +104,7 @@ const initialColumns: Record<string, { title: string; tasks: Task[] }> = {
 };
 
 export default function KanbanPage() {
-  const [columns, setColumns] = useState(initialColumns);
+  const [columns] = useState(initialColumns);
 
   const priorityColors = {
     high: "bg-destructive/10 text-destructive border-destructive/20",

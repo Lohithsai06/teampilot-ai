@@ -3,11 +3,11 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { DashboardLayout } from "@/components/common/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { GitBranch, GitCommitVertical as GitCommit, GitPullRequest, FileCode, Brain, Clock, User, Plus, RefreshCw, ExternalLink } from "lucide-react";
+import { GitBranch, GitCommitVertical as GitCommit, GitPullRequest, FileCode, Brain, User, RefreshCw, ExternalLink } from "lucide-react";
 
 const commits = [
   {
