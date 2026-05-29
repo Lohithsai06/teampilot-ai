@@ -332,7 +332,7 @@ export default function AIWorkspacePage() {
 
   const handleSend = async () => {
     if (!message.trim() || sending || aiResponding) return;
-    if (!anyProviderConfigured || !activeProvider) return;
+    if (!anyProviderConfigured) return;
 
     const text = message;
     setMessage("");
@@ -340,12 +340,7 @@ export default function AIWorkspacePage() {
     const context = buildProjectContext();
     const systemPrompt = buildSystemPrompt(context, activeMode);
 
-    const apiKey =
-      activeProvider === "gemini"
-        ? settings.geminiApiKey
-        : settings.openRouterApiKey;
-
-    await sendAndRespond(text, activeProvider, apiKey, systemPrompt);
+    await sendAndRespond(text, settings, systemPrompt);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -724,11 +719,21 @@ export default function AIWorkspacePage() {
                               </div>
                             )}
                           </div>
-                          {msg.timestamp && (
-                            <p className="text-[10px] text-muted-foreground px-1">
-                              {formatTime(msg.timestamp)}
-                            </p>
-                          )}
+                          <div className="flex items-center gap-2 px-1">
+                            {msg.timestamp && (
+                              <p className="text-[10px] text-muted-foreground">
+                                {formatTime(msg.timestamp)}
+                              </p>
+                            )}
+                            {msg.role === "assistant" && msg.provider === "openrouter" && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 px-1.5 py-0 h-4"
+                              >
+                                Fallback Provider Active
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                         {msg.role === "user" && (
                           <Avatar className="h-8 w-8 shrink-0 mt-0.5">

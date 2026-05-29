@@ -22,6 +22,7 @@ export interface ChatMessage {
   userId: string;
   role: "user" | "assistant" | "system";
   content: string;
+  provider?: string; // Stored provider name
   timestamp: Timestamp | null;
   isLocal?: boolean; // Used for the welcome message (not persisted)
 }
@@ -92,6 +93,7 @@ export function useAIChat(
           userId: "system",
           role: "assistant" as const,
           content: WELCOME_MESSAGE,
+          provider: "",
           timestamp: null,
           isLocal: true,
         },
@@ -113,6 +115,7 @@ export function useAIChat(
           userId,
           role: "user",
           content: content.trim(),
+          provider: "",
           timestamp: serverTimestamp(),
         });
       } finally {
@@ -132,6 +135,7 @@ export function useAIChat(
         userId,
         role: "assistant",
         content,
+        provider: "",
         timestamp: serverTimestamp(),
       });
     },
@@ -143,8 +147,12 @@ export function useAIChat(
   const sendAndRespond = useCallback(
     async (
       content: string,
-      provider: "gemini" | "openrouter",
-      apiKey: string,
+      aiSettings: {
+        geminiApiKey: string;
+        openRouterApiKey: string;
+        preferredProvider: "gemini" | "openrouter" | "none";
+        fallbackProvider: "gemini" | "openrouter" | "none";
+      },
       systemPrompt: string
     ) => {
       if (!projectId || !userId || !content.trim()) return;
@@ -157,6 +165,7 @@ export function useAIChat(
           userId,
           role: "user",
           content: content.trim(),
+          provider: "",
           timestamp: serverTimestamp(),
         });
       } finally {
@@ -180,8 +189,10 @@ export function useAIChat(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messages: recentMessages,
-            provider,
-            apiKey,
+            geminiApiKey: aiSettings.geminiApiKey,
+            openRouterApiKey: aiSettings.openRouterApiKey,
+            preferredProvider: aiSettings.preferredProvider,
+            fallbackProvider: aiSettings.fallbackProvider,
             systemPrompt,
           }),
         });
@@ -201,17 +212,17 @@ export function useAIChat(
           userId: "ai-assistant",
           role: "assistant",
           content: data.response,
+          provider: data.provider || "gemini",
           timestamp: serverTimestamp(),
         });
       } catch (error) {
         // Save error message as an assistant response so the user can see it
-        const errorMsg =
-          error instanceof Error ? error.message : "Unknown error";
         await addDoc(collection(db, "aiChats"), {
           projectId,
           userId: "ai-assistant",
           role: "assistant",
-          content: `⚠️ **Error communicating with AI provider:**\n\n${errorMsg}\n\nPlease check your API key in Settings and try again.`,
+          content: "Unable to connect to AI provider. Check API keys in Settings.",
+          provider: "",
           timestamp: serverTimestamp(),
         });
       } finally {

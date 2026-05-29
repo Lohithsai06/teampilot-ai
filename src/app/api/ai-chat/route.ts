@@ -1,37 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// ─── TeamPilot AI Chat API Route ──────────────────────────────────────────────
-// Proxies chat requests to Gemini or OpenRouter based on user's AI settings.
-// The API key is sent from the client (stored in Firestore per-user).
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const runtime = "edge";
 
 interface ChatRequestBody {
   messages: { role: "user" | "assistant" | "system"; content: string }[];
-  provider: "gemini" | "openrouter";
-  apiKey: string;
+  geminiApiKey?: string;
+  openRouterApiKey?: string;
+  preferredProvider?: "gemini" | "openrouter" | "none";
+  fallbackProvider?: "gemini" | "openrouter" | "none";
   systemPrompt: string;
+  apiKey?: string;
+  provider?: "gemini" | "openrouter";
 }
-
-// ─── Gemini API ───────────────────────────────────────────────────────────────
 
 async function callGemini(
   apiKey: string,
   systemPrompt: string,
   messages: { role: string; content: string }[]
 ): Promise<string> {
-  // Convert messages to Gemini format
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    systemInstruction: systemPrompt,
+  });
+
   const contents = messages
     .filter((m) => m.role !== "system")
     .map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
+      role: m.role === "assistant" ? "model" as const : "user" as const,
       parts: [{ text: m.content }],
     }));
 
-  const body = {
-    system_instruction: {
-      parts: [{ text: systemPrompt }],
-    },
+  const result = await model.generateContent({
     contents,
     generationConfig: {
       temperature: 0.7,
@@ -39,30 +40,14 @@ async function callGemini(
       topK: 40,
       maxOutputTokens: 8192,
     },
-  };
+  });
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini API error (${res.status}): ${errText}`);
+  const text = result.response.text();
+  if (!text) {
+    throw new Error("Empty response from Gemini");
   }
-
-  const data = await res.json();
-  const text =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-    "I apologize, I was unable to generate a response. Please try again.";
   return text;
 }
-
-// ─── OpenRouter API ───────────────────────────────────────────────────────────
 
 async function callOpenRouter(
   apiKey: string,
@@ -83,7 +68,7 @@ async function callOpenRouter(
       "X-Title": "TeamPilot AI",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.0-flash-exp:free",
+      model: "openrouter/free",
       messages: openRouterMessages,
       temperature: 0.7,
       max_tokens: 8192,
@@ -102,19 +87,24 @@ async function callOpenRouter(
   return text;
 }
 
-// ─── POST handler ─────────────────────────────────────────────────────────────
-
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequestBody = await request.json();
-    const { messages, provider, apiKey, systemPrompt } = body;
+    const {
+      messages,
+      geminiApiKey,
+      openRouterApiKey,
+      preferredProvider,
+      fallbackProvider,
+      systemPrompt,
+      apiKey,
+      provider,
+    } = body;
 
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "No API key provided. Configure your AI provider in Settings." },
-        { status: 400 }
-      );
-    }
+    // Resolve keys and providers
+    const resolvedGeminiKey = geminiApiKey || (provider === "gemini" ? apiKey : undefined);
+    const resolvedOpenRouterKey = openRouterApiKey || (provider === "openrouter" ? apiKey : undefined);
+    const resolvedPreferred = preferredProvider || provider || "gemini";
 
     if (!messages || messages.length === 0) {
       return NextResponse.json(
@@ -123,24 +113,67 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let response: string;
+    // Determine the sequence of providers to try
+    const attempts: { name: "gemini" | "openrouter"; key?: string }[] = [];
 
-    if (provider === "gemini") {
-      response = await callGemini(apiKey, systemPrompt, messages);
-    } else if (provider === "openrouter") {
-      response = await callOpenRouter(apiKey, systemPrompt, messages);
+    if (resolvedPreferred === "gemini") {
+      attempts.push({ name: "gemini", key: resolvedGeminiKey });
+      attempts.push({ name: "openrouter", key: resolvedOpenRouterKey });
+    } else if (resolvedPreferred === "openrouter") {
+      attempts.push({ name: "openrouter", key: resolvedOpenRouterKey });
+      attempts.push({ name: "gemini", key: resolvedGeminiKey });
     } else {
-      return NextResponse.json(
-        { error: `Unknown provider: ${provider}` },
-        { status: 400 }
-      );
+      attempts.push({ name: "gemini", key: resolvedGeminiKey });
+      attempts.push({ name: "openrouter", key: resolvedOpenRouterKey });
     }
 
-    return NextResponse.json({ response });
+    let lastError: Error | null = null;
+    let responseText = "";
+    let usedProvider: "gemini" | "openrouter" | null = null;
+
+    for (const attempt of attempts) {
+      if (!attempt.key) {
+        lastError = new Error(`Missing API key for ${attempt.name}`);
+        continue;
+      }
+
+      try {
+        if (attempt.name === "gemini") {
+          responseText = await callGemini(attempt.key, systemPrompt, messages);
+        } else {
+          responseText = await callOpenRouter(attempt.key, systemPrompt, messages);
+        }
+        usedProvider = attempt.name;
+        break; // Success!
+      } catch (err) {
+        console.warn(`Attempt with ${attempt.name} failed:`, err);
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+
+    if (usedProvider && responseText) {
+      return NextResponse.json({
+        response: responseText,
+        provider: usedProvider,
+      });
+    }
+
+    // Both failed
+    const errorMsg = lastError ? lastError.message : "Unknown error";
+    return NextResponse.json(
+      {
+        error: "Unable to connect to AI provider. Check API keys in Settings.",
+        details: errorMsg,
+      },
+      { status: 502 }
+    );
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "Unknown error occurred";
     console.error("AI Chat API error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Unable to connect to AI provider. Check API keys in Settings.", details: message },
+      { status: 500 }
+    );
   }
 }

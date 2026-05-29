@@ -16,8 +16,8 @@ export interface AISettings {
 const DEFAULT_SETTINGS: AISettings = {
   geminiApiKey: "",
   openRouterApiKey: "",
-  preferredProvider: "none",
-  fallbackProvider: "none",
+  preferredProvider: "gemini",
+  fallbackProvider: "openrouter",
   enableFallback: true,
 };
 
@@ -42,8 +42,8 @@ export function useAISettings() {
         setSettings({
           geminiApiKey: data.geminiApiKey ?? "",
           openRouterApiKey: data.openRouterApiKey ?? "",
-          preferredProvider: data.preferredProvider ?? "none",
-          fallbackProvider: data.fallbackProvider ?? "none",
+          preferredProvider: data.preferredProvider ?? "gemini",
+          fallbackProvider: data.fallbackProvider ?? "openrouter",
           enableFallback: data.enableFallback ?? true,
         });
       }

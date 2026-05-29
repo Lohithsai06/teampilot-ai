@@ -64,7 +64,8 @@ export default function SettingsPage() {
   const [aiForm, setAIForm] = useState({
     geminiApiKey: "",
     openRouterApiKey: "",
-    preferredProvider: "none" as "gemini" | "openrouter" | "none",
+    preferredProvider: "gemini" as "gemini" | "openrouter" | "none",
+    fallbackProvider: "openrouter" as "gemini" | "openrouter" | "none",
     enableFallback: true,
   });
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -77,6 +78,7 @@ export default function SettingsPage() {
       geminiApiKey: aiSettings.geminiApiKey,
       openRouterApiKey: aiSettings.openRouterApiKey,
       preferredProvider: aiSettings.preferredProvider,
+      fallbackProvider: aiSettings.fallbackProvider,
       enableFallback: aiSettings.enableFallback,
     });
   }, [aiSettings]);
@@ -87,6 +89,7 @@ export default function SettingsPage() {
         geminiApiKey: aiForm.geminiApiKey,
         openRouterApiKey: aiForm.openRouterApiKey,
         preferredProvider: aiForm.preferredProvider,
+        fallbackProvider: aiForm.fallbackProvider,
         enableFallback: aiForm.enableFallback,
       });
       setAISaveMsg({ type: "success", text: "API keys saved successfully!" });
