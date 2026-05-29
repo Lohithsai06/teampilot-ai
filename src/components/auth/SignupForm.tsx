@@ -2,22 +2,16 @@
 
 import React from "react";
 import Link from "next/link";
-<<<<<<< HEAD
 import { useRouter } from "next/navigation";
-=======
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-<<<<<<< HEAD
+import { Rocket, Mail, Lock, User, Loader2, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-=======
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Rocket, Mail, Lock, User, Loader as Loader2 } from "lucide-react";
 
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
@@ -32,13 +26,12 @@ type SignupFormData = z.infer<typeof signupSchema>;
 
 export function SignupForm() {
   const [isLoading, setIsLoading] = React.useState(false);
-<<<<<<< HEAD
   const [isGoogleLoading, setIsGoogleLoading] = React.useState(false);
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
   const [authError, setAuthError] = React.useState<string | null>(null);
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
-=======
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 
   const {
     register,
@@ -49,7 +42,6 @@ export function SignupForm() {
   });
 
   const onSubmit = async (data: SignupFormData) => {
-<<<<<<< HEAD
     setAuthError(null);
     setIsLoading(true);
     try {
@@ -76,14 +68,6 @@ export function SignupForm() {
     } finally {
       setIsGoogleLoading(false);
     }
-=======
-    setIsLoading(true);
-    // Simulate API call - will be replaced with Firebase later
-    setTimeout(() => {
-      setIsLoading(false);
-      window.location.href = "/dashboard";
-    }, 1000);
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
   };
 
   return (
@@ -111,7 +95,7 @@ export function SignupForm() {
               <Input
                 id="name"
                 type="text"
-                placeholder="John Doe"
+                placeholder="Enter your full name"
                 className="pl-10"
                 {...register("name")}
               />
@@ -130,7 +114,7 @@ export function SignupForm() {
               <Input
                 id="email"
                 type="email"
-                placeholder="john@example.com"
+                placeholder="Enter your email address"
                 className="pl-10"
                 {...register("email")}
               />
@@ -148,11 +132,22 @@ export function SignupForm() {
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 placeholder="••••••••"
-                className="pl-10"
+                className="pl-10 pr-10"
                 {...register("password")}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
             </div>
             {errors.password && (
               <p className="text-xs text-destructive">{errors.password.message}</p>
@@ -167,11 +162,22 @@ export function SignupForm() {
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="confirmPassword"
-                type="password"
+                type={showConfirmPassword ? "text" : "password"}
                 placeholder="••••••••"
-                className="pl-10"
+                className="pl-10 pr-10"
                 {...register("confirmPassword")}
               />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
             </div>
             {errors.confirmPassword && (
               <p className="text-xs text-destructive">{errors.confirmPassword.message}</p>
@@ -191,12 +197,9 @@ export function SignupForm() {
               </Link>
             </span>
           </div>
-<<<<<<< HEAD
           {authError && (
             <p className="text-sm text-destructive">{authError}</p>
           )}
-=======
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
         </CardContent>
 
         <CardFooter className="flex flex-col gap-4">
@@ -223,16 +226,12 @@ export function SignupForm() {
           </div>
 
           <div className="grid grid-cols-2 gap-4 w-full">
-<<<<<<< HEAD
             <Button
               variant="outline"
               type="button"
               onClick={handleGoogleSignIn}
               disabled={isGoogleLoading}
             >
-=======
-            <Button variant="outline" type="button">
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
               <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
                 <path
                   fill="currentColor"
@@ -251,11 +250,7 @@ export function SignupForm() {
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                 />
               </svg>
-<<<<<<< HEAD
               {isGoogleLoading ? "Connecting..." : "Google"}
-=======
-              Google
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
             </Button>
             <Button variant="outline" type="button">
               <svg className="mr-2 h-4 w-4" fill="currentColor" viewBox="0 0 24 24">

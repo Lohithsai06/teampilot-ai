@@ -13,7 +13,7 @@ const commits = [
   {
     id: "a3f2b1c",
     message: "feat: add authentication flow with Firebase",
-    author: "John Pilot",
+    author: "Developer",
     time: "2 minutes ago",
     branch: "main",
     files: 5,

@@ -15,11 +15,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "./ThemeToggle";
-<<<<<<< HEAD
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
-=======
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -34,11 +31,15 @@ import { motion } from "framer-motion";
 interface NavbarProps {
   showSearch?: boolean;
   showActions?: boolean;
+  onMenuClick?: () => void;
 }
 
-export function Navbar({ showSearch = true, showActions = true }: NavbarProps) {
+export function Navbar({ 
+  showSearch = true, 
+  showActions = true,
+  onMenuClick 
+}: NavbarProps) {
   const pathname = usePathname();
-<<<<<<< HEAD
   const { user, logout } = useAuth();
   const router = useRouter();
 
@@ -50,8 +51,6 @@ export function Navbar({ showSearch = true, showActions = true }: NavbarProps) {
       console.error("Failed to logout:", error);
     }
   };
-=======
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 
   return (
     <motion.header
@@ -61,6 +60,14 @@ export function Navbar({ showSearch = true, showActions = true }: NavbarProps) {
     >
       <div className="flex h-16 items-center justify-between px-4 md:px-8">
         <div className="flex items-center gap-6">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            onClick={onMenuClick}
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
           <Link href="/" className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
               <Rocket className="h-5 w-5 text-primary-foreground" />
@@ -96,30 +103,20 @@ export function Navbar({ showSearch = true, showActions = true }: NavbarProps) {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="relative h-9 w-9 rounded-full">
                     <Avatar className="h-9 w-9">
-<<<<<<< HEAD
                       <AvatarImage src={user?.photoURL || ""} alt={user?.displayName || "User"} />
                       <AvatarFallback>
                         {user?.displayName
                           ? user.displayName.split(" ").map((n) => n[0]).join("").toUpperCase()
                           : user?.email?.charAt(0).toUpperCase() || "U"}
                       </AvatarFallback>
-=======
-                      <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop" alt="User" />
-                      <AvatarFallback>JP</AvatarFallback>
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
                     </Avatar>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>
                     <div className="flex flex-col space-y-1">
-<<<<<<< HEAD
                       <p className="text-sm font-medium">{user?.displayName || "User"}</p>
                       <p className="text-xs text-muted-foreground">{user?.email}</p>
-=======
-                      <p className="text-sm font-medium">John Pilot</p>
-                      <p className="text-xs text-muted-foreground">john@teampilot.ai</p>
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
@@ -132,11 +129,7 @@ export function Navbar({ showSearch = true, showActions = true }: NavbarProps) {
                     Settings
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-<<<<<<< HEAD
                   <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
-=======
-                  <DropdownMenuItem className="text-destructive">
->>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
                     <LogOut className="mr-2 h-4 w-4" />
                     Logout
                   </DropdownMenuItem>

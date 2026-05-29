@@ -13,10 +13,10 @@ import { Progress } from "@/components/ui/progress";
 const teamMembers = [
   {
     id: 1,
-    name: "John Pilot",
-    role: "Team Lead",
+    name: "Team Member",
+    role: "Lead Developer",
     avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop",
-    email: "john@teampilot.ai",
+    email: "member@teampilot.ai",
     tasks: { assigned: 8, completed: 6 },
     status: "active",
     workload: 75,
