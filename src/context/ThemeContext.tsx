@@ -17,7 +17,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+<<<<<<< HEAD
     // eslint-disable-next-line react-hooks/set-state-in-effect
+=======
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
     setMounted(true);
     const stored = localStorage.getItem("teampilot-theme") as Theme | null;
     if (stored && ["light", "dark", "hybrid"].includes(stored)) {

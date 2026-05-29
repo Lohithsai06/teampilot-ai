@@ -1,12 +1,17 @@
 "use client";
 
+<<<<<<< HEAD
 import React, { useState, useEffect } from "react";
+=======
+import React, { useState } from "react";
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 import { motion } from "framer-motion";
 import { DashboardLayout } from "@/components/common/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+<<<<<<< HEAD
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
@@ -15,6 +20,12 @@ import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { LoadingSpinner } from "@/components/common/LoadingSpinner";
 import { AvatarUpload } from "@/components/auth/AvatarUpload";
+=======
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ThemeToggle } from "@/components/common/ThemeToggle";
+import { useTheme } from "@/context/ThemeContext";
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 import {
   Settings,
   User,
@@ -30,10 +41,13 @@ import {
   Sun,
   Moon,
   Sparkles,
+<<<<<<< HEAD
   Info,
   ShieldCheck,
   Calendar,
   Clock as ClockIcon,
+=======
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 } from "lucide-react";
 
 const themePreviews = [
@@ -44,6 +58,7 @@ const themePreviews = [
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
+<<<<<<< HEAD
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("profile");
   const [isSaving, setIsSaving] = useState(false);
@@ -91,6 +106,9 @@ export default function SettingsPage() {
   };
 
   const defaultName = user?.email?.split("@")[0] || "User";
+=======
+  const [activeTab, setActiveTab] = useState("profile");
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 
   return (
     <DashboardLayout>
@@ -143,18 +161,36 @@ export default function SettingsPage() {
             </TabsTrigger>
           </TabsList>
 
+<<<<<<< HEAD
           <TabsContent value="profile" className="space-y-6">
+=======
+          <TabsContent value="profile" className="space-y-4">
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
             <Card>
               <CardHeader>
                 <CardTitle>Profile Settings</CardTitle>
                 <CardDescription>Update your personal information</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+<<<<<<< HEAD
                 <AvatarUpload />
+=======
+                <div className="flex items-center gap-6">
+                  <Avatar className="h-20 w-20">
+                    <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop" />
+                    <AvatarFallback>JP</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <Button variant="outline" size="sm">Change Avatar</Button>
+                    <p className="text-xs text-muted-foreground mt-2">JPG, PNG or GIF. Max 2MB.</p>
+                  </div>
+                </div>
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Full Name</label>
+<<<<<<< HEAD
                     <Input 
                       placeholder={defaultName} 
                       value={formData.displayName}
@@ -243,6 +279,27 @@ export default function SettingsPage() {
                       {user?.uid}
                     </span>
                   </div>
+=======
+                    <Input defaultValue="John Pilot" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Email</label>
+                    <Input defaultValue="john@teampilot.ai" type="email" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Role</label>
+                    <Input defaultValue="Team Lead" disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Team Code</label>
+                    <Input defaultValue="TEAM-2847" disabled />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline">Cancel</Button>
+                  <Button>Save Changes</Button>
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
                 </div>
               </CardContent>
             </Card>

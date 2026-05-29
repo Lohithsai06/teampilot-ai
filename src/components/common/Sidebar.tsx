@@ -14,12 +14,18 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+<<<<<<< HEAD
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
+=======
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 import {
   Tooltip,
   TooltipContent,
@@ -46,6 +52,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const pathname = usePathname();
+<<<<<<< HEAD
   const { logout } = useAuth();
   const router = useRouter();
 
@@ -57,6 +64,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       console.error("Failed to logout:", error);
     }
   };
+=======
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -137,6 +146,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             return <div key={item.href}>{linkContent}</div>;
           })}
         </nav>
+<<<<<<< HEAD
 
         <div className="p-2 border-t">
           <Button
@@ -162,6 +172,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             </AnimatePresence>
           </Button>
         </div>
+=======
+>>>>>>> 34e35ede3dbaf79d7f530c46a21eb58646c938b3
       </motion.aside>
     </TooltipProvider>
   );
