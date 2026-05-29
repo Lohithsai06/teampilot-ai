@@ -2,18 +2,20 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useAuth } from "./AuthContext";
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  doc, 
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
   getDoc,
-  Timestamp
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
-interface Project {
+// ─── Types (exported so Team page can use them) ──────────────────────────────
+
+export interface Project {
   projectId: string;
   projectName: string;
   projectDescription: string;
@@ -24,34 +26,50 @@ interface Project {
   status: "active" | "archived";
   currentPhase: number;
   totalMembers: number;
-  // Task progress fields — default 0 on creation
   totalTasks: number;
   completedTasks: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
 
+export interface ProjectMember {
+  projectId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: "leader" | "member";
+  joinedAt: Timestamp | null;
+}
+
+// ─── Context type ─────────────────────────────────────────────────────────────
+
 interface ProjectContextType {
   projects: Project[];
   activeProject: Project | null;
+  activeProjectMembers: ProjectMember[];
   userRole: "leader" | "member" | null;
   loading: boolean;
+  membersLoading: boolean;
   projectProgress: number; // 0-100, derived from real task counts
   selectProject: (projectId: string) => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
+// ─── Provider ─────────────────────────────────────────────────────────────────
+
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [activeProjectMembers, setActiveProjectMembers] = useState<ProjectMember[]>([]);
   const [userRole, setUserRole] = useState<"leader" | "member" | null>(null);
   const [loading, setLoading] = useState(true);
+  const [membersLoading, setMembersLoading] = useState(false);
 
+  // ── 1. Listen to all projects the current user belongs to ──────────────────
   useEffect(() => {
     if (!user) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setProjects([]);
       setActiveProject(null);
       setUserRole(null);
@@ -61,37 +79,36 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
     setLoading(true);
 
-    // 1. Listen to projects where the user is a member
     const membersQuery = query(
       collection(db, "projectMembers"),
       where("userId", "==", user.uid)
     );
 
-    const unsubscribeMembers = onSnapshot(membersQuery, async (snapshot) => {
-      const projectIds = snapshot.docs.map(doc => doc.data().projectId);
-      
+    const unsubscribeMembers = onSnapshot(membersQuery, (snapshot) => {
+      const projectIds = snapshot.docs.map((d) => d.data().projectId as string);
+
       if (projectIds.length === 0) {
         setProjects([]);
         setLoading(false);
         return;
       }
 
-      // 2. Listen to the actual project details
       const projectsQuery = query(
         collection(db, "projects"),
         where("projectId", "in", projectIds)
       );
 
       const unsubscribeProjects = onSnapshot(projectsQuery, (projectSnapshot) => {
-        const projectsData = projectSnapshot.docs.map(doc => doc.data() as Project);
+        const projectsData = projectSnapshot.docs.map((d) => d.data() as Project);
         setProjects(projectsData);
-        
-        // Restore active project if it still exists in the list
-        if (activeProject) {
-          const updatedActive = projectsData.find(p => p.projectId === activeProject.projectId);
-          if (updatedActive) setActiveProject(updatedActive);
-        }
-        
+
+        // Keep active project in sync when Firestore updates it
+        setActiveProject((prev) => {
+          if (!prev) return null;
+          const updated = projectsData.find((p) => p.projectId === prev.projectId);
+          return updated ?? prev;
+        });
+
         setLoading(false);
       });
 
@@ -99,49 +116,73 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => unsubscribeMembers();
-  }, [user, activeProject]);
+  }, [user]);
 
-  // Update userRole when activeProject changes
+  // ── 2. Listen to members of the active project ────────────────────────────
+  useEffect(() => {
+    if (!activeProject) {
+      setActiveProjectMembers([]);
+      return;
+    }
+
+    setMembersLoading(true);
+
+    const q = query(
+      collection(db, "projectMembers"),
+      where("projectId", "==", activeProject.projectId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const members = snapshot.docs.map((d) => d.data() as ProjectMember);
+      setActiveProjectMembers(members);
+      setMembersLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [activeProject?.projectId]);
+
+  // ── 3. Resolve role of current user in active project ─────────────────────
   useEffect(() => {
     if (!user || !activeProject) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUserRole(null);
       return;
     }
 
-    const checkRole = async () => {
-      const memberRef = doc(db, "projectMembers", `${activeProject.projectId}_${user.uid}`);
-      const memberDoc = await getDoc(memberRef);
-      if (memberDoc.exists()) {
-        setUserRole(memberDoc.data().role);
+    const memberRef = doc(
+      db,
+      "projectMembers",
+      `${activeProject.projectId}_${user.uid}`
+    );
+    getDoc(memberRef).then((snap) => {
+      if (snap.exists()) {
+        setUserRole(snap.data().role as "leader" | "member");
+      } else {
+        setUserRole(null);
       }
-    };
+    });
+  }, [user, activeProject?.projectId]);
 
-    checkRole();
-  }, [user, activeProject]);
-
-  const selectProject = async (projectId: string) => {
-    const project = projects.find(p => p.projectId === projectId);
-    if (project) {
-      setActiveProject(project);
-      // Persist selection
-      localStorage.setItem("selectedProjectId", projectId);
-    }
-  };
-
-  // Initial selection from localStorage
+  // ── 4. Restore last selected project from localStorage ────────────────────
   useEffect(() => {
     if (projects.length > 0 && !activeProject) {
       const savedId = localStorage.getItem("selectedProjectId");
       if (savedId) {
-        const savedProject = projects.find(p => p.projectId === savedId);
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (savedProject) setActiveProject(savedProject);
+        const saved = projects.find((p) => p.projectId === savedId);
+        if (saved) setActiveProject(saved);
       }
     }
   }, [projects, activeProject]);
 
-  // Compute real progress from Firebase task counts — 0% if no tasks exist yet
+  // ── 5. Select a project ───────────────────────────────────────────────────
+  const selectProject = async (projectId: string) => {
+    const project = projects.find((p) => p.projectId === projectId);
+    if (project) {
+      setActiveProject(project);
+      localStorage.setItem("selectedProjectId", projectId);
+    }
+  };
+
+  // ── 6. Compute real progress from Firebase task fields ───────────────────
   const projectProgress = (() => {
     if (!activeProject) return 0;
     const total = activeProject.totalTasks ?? 0;
@@ -151,11 +192,24 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   })();
 
   return (
-    <ProjectContext.Provider value={{ projects, activeProject, userRole, loading, projectProgress, selectProject }}>
+    <ProjectContext.Provider
+      value={{
+        projects,
+        activeProject,
+        activeProjectMembers,
+        userRole,
+        loading,
+        membersLoading,
+        projectProgress,
+        selectProject,
+      }}
+    >
       {children}
     </ProjectContext.Provider>
   );
 }
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useProject() {
   const context = useContext(ProjectContext);

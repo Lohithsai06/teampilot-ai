@@ -1,30 +1,32 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
   DialogDescription,
-  DialogFooter
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  serverTimestamp, 
-  query, 
-  where, 
-  getDocs 
+import {
+  collection,
+  doc,
+  setDoc,
+  serverTimestamp,
+  query,
+  where,
+  getDocs,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { LoadingSpinner } from "@/components/common/LoadingSpinner";
 import { Rocket, GitBranch, CheckCircle2 } from "lucide-react";
+
+// ─── Create Project Modal ─────────────────────────────────────────────────────
 
 interface CreateProjectModalProps {
   open: boolean;
@@ -112,21 +114,23 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
         <form onSubmit={handleCreate} className="space-y-4 py-4">
           <div className="space-y-2">
             <label className="text-sm font-medium">Project Name</label>
-            <Input 
+            <Input
               required
-              placeholder="e.g., TeamPilot AI Dashboard" 
+              placeholder="e.g., TeamPilot AI Dashboard"
               value={formData.projectName}
-              onChange={(e) => setFormData(prev => ({ ...prev, projectName: e.target.value }))}
+              onChange={(e) => setFormData((prev) => ({ ...prev, projectName: e.target.value }))}
             />
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">Description</label>
-            <Textarea 
+            <Textarea
               required
-              placeholder="What is this project about?" 
+              placeholder="What is this project about?"
               className="min-h-[100px]"
               value={formData.projectDescription}
-              onChange={(e) => setFormData(prev => ({ ...prev, projectDescription: e.target.value }))}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, projectDescription: e.target.value }))
+              }
             />
           </div>
           <div className="space-y-2">
@@ -134,10 +138,10 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
               <GitBranch className="h-4 w-4" />
               GitHub Repository (Optional)
             </label>
-            <Input 
-              placeholder="https://github.com/username/repo" 
+            <Input
+              placeholder="https://github.com/username/repo"
               value={formData.githubRepo}
-              onChange={(e) => setFormData(prev => ({ ...prev, githubRepo: e.target.value }))}
+              onChange={(e) => setFormData((prev) => ({ ...prev, githubRepo: e.target.value }))}
             />
           </div>
           <DialogFooter className="pt-4">
@@ -155,6 +159,8 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
   );
 }
 
+// ─── Join Project Modal ───────────────────────────────────────────────────────
+
 interface JoinProjectModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -167,15 +173,26 @@ export function JoinProjectModal({ open, onOpenChange }: JoinProjectModalProps) 
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleClose = () => {
+    onOpenChange(false);
+    setSuccess(false);
+    setProjectCode("");
+    setError(null);
+  };
+
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !projectCode) return;
 
     setLoading(true);
     setError(null);
+
     try {
       // 1. Find project by code
-      const q = query(collection(db, "projects"), where("projectCode", "==", projectCode.toUpperCase()));
+      const q = query(
+        collection(db, "projects"),
+        where("projectCode", "==", projectCode.toUpperCase())
+      );
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
@@ -183,20 +200,42 @@ export function JoinProjectModal({ open, onOpenChange }: JoinProjectModalProps) 
         return;
       }
 
-      const projectDoc = querySnapshot.docs[0];
-      const projectData = projectDoc.data();
+      const projectData = querySnapshot.docs[0].data();
 
-      // 2. Check if already a member
-      const memberDoc = await getDocs(query(collection(db, "projectMembers"), 
-        where("projectId", "==", projectData.projectId), 
-        where("userId", "==", user.uid)));
-      
-      if (!memberDoc.empty) {
+      // 2. Guard: cannot join own project
+      if (projectData.leaderId === user.uid) {
+        setError("You cannot join your own project. Share the code with teammates.");
+        return;
+      }
+
+      // 3. Guard: already a member
+      const memberSnap = await getDocs(
+        query(
+          collection(db, "projectMembers"),
+          where("projectId", "==", projectData.projectId),
+          where("userId", "==", user.uid)
+        )
+      );
+      if (!memberSnap.empty) {
         setError("You are already a member of this project.");
         return;
       }
 
-      // 3. Create join request
+      // 4. Guard: duplicate pending request
+      const requestSnap = await getDocs(
+        query(
+          collection(db, "joinRequests"),
+          where("projectId", "==", projectData.projectId),
+          where("userId", "==", user.uid),
+          where("status", "==", "pending")
+        )
+      );
+      if (!requestSnap.empty) {
+        setError("You already have a pending join request for this project.");
+        return;
+      }
+
+      // 5. Create join request
       const requestId = `${projectData.projectId}_${user.uid}`;
       await setDoc(doc(db, "joinRequests", requestId), {
         requestId,
@@ -204,18 +243,13 @@ export function JoinProjectModal({ open, onOpenChange }: JoinProjectModalProps) 
         projectName: projectData.projectName,
         projectCode: projectData.projectCode,
         userId: user.uid,
-        name: user.displayName || "Anonymous",
-        email: user.email,
+        userName: user.displayName || "Anonymous",
+        userEmail: user.email,
         status: "pending",
         createdAt: serverTimestamp(),
       });
 
       setSuccess(true);
-      setTimeout(() => {
-        onOpenChange(false);
-        setSuccess(false);
-        setProjectCode("");
-      }, 2000);
     } catch (err) {
       console.error("Error joining project:", err);
       setError("An error occurred. Please try again.");
@@ -225,7 +259,7 @@ export function JoinProjectModal({ open, onOpenChange }: JoinProjectModalProps) 
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader>
           <DialogTitle>Join Project</DialogTitle>
@@ -233,6 +267,7 @@ export function JoinProjectModal({ open, onOpenChange }: JoinProjectModalProps) 
             Enter the unique project code shared by your team leader.
           </DialogDescription>
         </DialogHeader>
+
         {success ? (
           <div className="py-8 flex flex-col items-center justify-center text-center space-y-4">
             <div className="h-12 w-12 rounded-full bg-success/10 flex items-center justify-center">
@@ -240,24 +275,30 @@ export function JoinProjectModal({ open, onOpenChange }: JoinProjectModalProps) 
             </div>
             <div>
               <p className="font-semibold text-lg">Request Sent!</p>
-              <p className="text-sm text-muted-foreground">Your join request has been sent successfully.</p>
+              <p className="text-sm text-muted-foreground">
+                Your join request has been sent successfully. The project leader
+                will review it shortly.
+              </p>
             </div>
+            <Button onClick={handleClose} variant="outline" className="mt-2">
+              Close
+            </Button>
           </div>
         ) : (
           <form onSubmit={handleJoin} className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Project Code</label>
-              <Input 
+              <Input
                 required
-                placeholder="e.g., TP-A8F2D4" 
-                className="uppercase font-mono"
+                placeholder="e.g., TP-A8F2D4"
+                className="uppercase font-mono tracking-widest"
                 value={projectCode}
                 onChange={(e) => setProjectCode(e.target.value.toUpperCase())}
               />
               {error && <p className="text-xs text-destructive">{error}</p>}
             </div>
             <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="outline" onClick={handleClose}>
                 Cancel
               </Button>
               <Button type="submit" disabled={loading || !projectCode}>

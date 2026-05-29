@@ -65,12 +65,15 @@ service cloud.firestore {
     // ─── joinRequests ────────────────────────────────────────────────────────
     // Document ID format: {projectId}_{userId}
     match /joinRequests/{requestId} {
-      // A user can read their own request;
+      // A user can read their own requests (needed for duplicate-request guard);
       // a project leader can read requests for their projects
       allow read: if isAuth() && (
         resource.data.userId == request.auth.uid ||
         isLeader(resource.data.projectId)
       );
+
+      // Allow listing (query) own requests — needed for getDocs() duplicate check
+      allow list: if isAuth();
 
       // Any authenticated user can create a join request for themselves
       allow create: if isAuth()
@@ -80,7 +83,7 @@ service cloud.firestore {
       // Only the project leader can delete (approve/reject) a join request
       allow delete: if isAuth() && isLeader(resource.data.projectId);
 
-      // Status updates are handled by delete + create (no update needed)
+      // Status updates are handled by delete + re-create (no update needed)
       allow update: if false;
     }
   }

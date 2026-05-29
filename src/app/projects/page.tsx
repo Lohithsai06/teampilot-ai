@@ -115,14 +115,26 @@ export default function ProjectsPage() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">Progress</span>
-                        <span className="font-medium">{project.currentPhase * 20}%</span>
+                        <span className="font-medium">
+                          {(project.totalTasks ?? 0) === 0
+                            ? "0%"
+                            : `${Math.round(((project.completedTasks ?? 0) / (project.totalTasks ?? 1)) * 100)}%`
+                          }
+                        </span>
                       </div>
                       <div className="h-2 bg-muted rounded-full overflow-hidden">
                         <div
                           className="h-full bg-primary transition-all duration-300"
-                          style={{ width: `${project.currentPhase * 20}%` }}
+                          style={{
+                            width: (project.totalTasks ?? 0) === 0
+                              ? "0%"
+                              : `${Math.round(((project.completedTasks ?? 0) / (project.totalTasks ?? 1)) * 100)}%`
+                          }}
                         />
                       </div>
+                      {(project.totalTasks ?? 0) === 0 && (
+                        <p className="text-xs text-muted-foreground">No tasks created yet</p>
+                      )}
                     </div>
 
                     <div className="flex gap-2">
