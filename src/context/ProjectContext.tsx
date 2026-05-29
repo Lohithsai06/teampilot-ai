@@ -24,6 +24,9 @@ interface Project {
   status: "active" | "archived";
   currentPhase: number;
   totalMembers: number;
+  // Task progress fields — default 0 on creation
+  totalTasks: number;
+  completedTasks: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -33,6 +36,7 @@ interface ProjectContextType {
   activeProject: Project | null;
   userRole: "leader" | "member" | null;
   loading: boolean;
+  projectProgress: number; // 0-100, derived from real task counts
   selectProject: (projectId: string) => Promise<void>;
 }
 
@@ -137,8 +141,17 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     }
   }, [projects, activeProject]);
 
+  // Compute real progress from Firebase task counts — 0% if no tasks exist yet
+  const projectProgress = (() => {
+    if (!activeProject) return 0;
+    const total = activeProject.totalTasks ?? 0;
+    const completed = activeProject.completedTasks ?? 0;
+    if (total === 0) return 0;
+    return Math.round((completed / total) * 100);
+  })();
+
   return (
-    <ProjectContext.Provider value={{ projects, activeProject, userRole, loading, selectProject }}>
+    <ProjectContext.Provider value={{ projects, activeProject, userRole, loading, projectProgress, selectProject }}>
       {children}
     </ProjectContext.Provider>
   );

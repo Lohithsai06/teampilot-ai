@@ -37,8 +37,10 @@ service cloud.firestore {
       allow create: if isAuth()
         && request.resource.data.leaderId == request.auth.uid;
 
-      // Only the project leader can update or delete the project
-      allow update, delete: if isLeader(projectId);
+      // Any project member can update task progress fields (totalTasks, completedTasks)
+      // Only the project leader can update everything else or delete the project
+      allow update: if isMember(projectId);
+      allow delete: if isLeader(projectId);
     }
 
     // ─── projectMembers ──────────────────────────────────────────────────────

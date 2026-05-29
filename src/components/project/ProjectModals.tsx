@@ -71,6 +71,9 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
         status: "active",
         currentPhase: 1,
         totalMembers: 1,
+        // Task tracking — starts at 0 for every new project
+        totalTasks: 0,
+        completedTasks: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

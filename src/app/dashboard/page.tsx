@@ -24,7 +24,7 @@ import Link from "next/link";
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { projects, activeProject, userRole } = useProject();
+  const { projects, activeProject, userRole, projectProgress } = useProject();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
 
@@ -81,9 +81,15 @@ export default function DashboardPage() {
             },
             { 
               icon: Brain, 
-              label: "Current Phase", 
-              value: activeProject ? `Phase ${activeProject.currentPhase}` : "-", 
-              change: activeProject ? "Project status" : "No active project" 
+              label: "Tasks Done", 
+              value: activeProject 
+                ? `${activeProject.completedTasks ?? 0}/${activeProject.totalTasks ?? 0}` 
+                : "0/0", 
+              change: activeProject
+                ? (activeProject.totalTasks ?? 0) === 0
+                  ? "No tasks created yet"
+                  : `${projectProgress}% complete`
+                : "No active project"
             },
           ].map((stat, index) => (
             <motion.div
@@ -191,14 +197,27 @@ export default function DashboardPage() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Project Progress</span>
-                      <span className="font-medium">{activeProject.currentPhase * 20}%</span>
+                      <span className="font-medium">{projectProgress}%</span>
                     </div>
                     <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
                       <div 
                         className="h-full bg-primary transition-all duration-500" 
-                        style={{ width: `${activeProject.currentPhase * 20}%` }}
+                        style={{ width: `${projectProgress}%` }}
                       />
                     </div>
+                    {/* Task counts from Firebase */}
+                    {(activeProject.totalTasks ?? 0) === 0 ? (
+                      <div className="text-center py-2 text-xs text-muted-foreground space-y-0.5">
+                        <p className="font-medium">No tasks created yet</p>
+                        <p>Start planning your project</p>
+                        <p className="italic">Generate a roadmap to begin</p>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>{activeProject.completedTasks ?? 0} completed</span>
+                        <span>{activeProject.totalTasks ?? 0} total tasks</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4 pt-2">
