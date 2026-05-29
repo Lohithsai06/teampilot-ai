@@ -14,7 +14,9 @@ import {
   ArrowRight,
   ShieldCheck,
   UserPlus,
-  Rocket
+  Rocket,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -30,6 +32,18 @@ export default function ProjectsPage() {
   const { projects, selectProject, activeProject } = useProject();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  // Per-card copy state: projectId -> boolean
+  const [copiedCodes, setCopiedCodes] = useState<Record<string, boolean>>({});
+
+  const handleCopyCode = (projectId: string, code: string) => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopiedCodes((prev) => ({ ...prev, [projectId]: true }));
+      setTimeout(() =>
+        setCopiedCodes((prev) => ({ ...prev, [projectId]: false })),
+        2000
+      );
+    }).catch(() => {});
+  };
 
   return (
     <DashboardLayout>
@@ -99,9 +113,6 @@ export default function ProjectsPage() {
                       <Badge variant={project.status === "active" ? "default" : "secondary"}>
                         {project.status}
                       </Badge>
-                      <Badge variant="outline" className="font-mono text-[10px]">
-                        {project.projectCode}
-                      </Badge>
                       <div className="flex items-center gap-1 text-muted-foreground">
                         <Users className="h-4 w-4" />
                         {project.totalMembers} members
@@ -110,6 +121,28 @@ export default function ProjectsPage() {
                         <ShieldCheck className="h-4 w-4" />
                         {project.leaderName}
                       </div>
+                    </div>
+
+                    {/* ── Project Code ──────────────────────────── */}
+                    <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Project Code</p>
+                        <span className="font-mono text-base font-bold tracking-widest text-foreground">
+                          {project.projectCode}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-1.5 shrink-0 h-8"
+                        onClick={(e) => { e.stopPropagation(); handleCopyCode(project.projectId, project.projectCode); }}
+                      >
+                        {copiedCodes[project.projectId] ? (
+                          <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="h-3.5 w-3.5" /> Copy</>
+                        )}
+                      </Button>
                     </div>
 
                     <div className="space-y-2">

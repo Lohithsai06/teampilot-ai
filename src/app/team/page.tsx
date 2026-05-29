@@ -13,6 +13,7 @@ import {
   Mail,
   Shield,
   Copy,
+  Check,
   Clock,
   FolderKanban,
   Loader2,
@@ -52,9 +53,10 @@ export default function TeamPage() {
 
   const handleCopyCode = () => {
     if (!activeProject) return;
-    navigator.clipboard.writeText(activeProject.projectCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard.writeText(activeProject.projectCode).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
   };
 
   // ── No active project ──────────────────────────────────────────────────────
@@ -136,6 +138,48 @@ export default function TeamPage() {
             )}
           </div>
         </div>
+
+        {/* ── Invite / Project Code Banner ───────────────────────────── */}
+        <Card className={`border-2 ${
+          userRole === "leader"
+            ? "border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10"
+            : "bg-muted/20"
+        }`}>
+          <CardContent className="p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex-1 space-y-1">
+                {userRole === "leader" ? (
+                  <div className="flex items-center gap-2 mb-1">
+                    <UserPlus className="h-4 w-4 text-primary" />
+                    <p className="text-sm font-semibold text-primary">Invite Team Members</p>
+                  </div>
+                ) : (
+                  <p className="text-sm font-medium mb-1">Project Code</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Share this code with teammates so they can request to join.
+                </p>
+                <div className="pt-2">
+                  <span className="font-mono text-2xl font-black tracking-[0.25em] text-foreground">
+                    {activeProject.projectCode}
+                  </span>
+                </div>
+              </div>
+              <Button
+                size="default"
+                variant={userRole === "leader" ? "default" : "outline"}
+                className="gap-2 w-full sm:w-auto"
+                onClick={handleCopyCode}
+              >
+                {copied ? (
+                  <><Check className="h-4 w-4" /> Copied!</>
+                ) : (
+                  <><Copy className="h-4 w-4" /> Copy Code</>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Pending Requests (leader only) */}
         {userRole === "leader" && <PendingRequests />}
@@ -219,16 +263,25 @@ export default function TeamPage() {
         {/* Footer info */}
         <Card className="bg-muted/30">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">
-                <strong>Share your project code</strong> with teammates so they can
-                request to join.{" "}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1 text-sm text-muted-foreground">
+                <strong>Project Code:</strong>{" "}
                 <span className="font-mono font-semibold text-foreground">
                   {activeProject.projectCode}
                 </span>
+                {" — "}Share with teammates so they can request to join.
               </div>
-              <Button variant="outline" size="sm" onClick={handleCopyCode}>
-                {copied ? "Copied!" : "Copy Code"}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 w-full sm:w-auto"
+                onClick={handleCopyCode}
+              >
+                {copied ? (
+                  <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
+                ) : (
+                  <><Copy className="h-3.5 w-3.5" /> Copy Code</>
+                )}
               </Button>
             </div>
           </CardContent>

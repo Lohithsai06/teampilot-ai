@@ -15,6 +15,8 @@ import {
   Rocket,
   ShieldCheck,
   Users,
+  Copy,
+  Check,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useProject } from "@/context/ProjectContext";
@@ -27,6 +29,15 @@ export default function DashboardPage() {
   const { projects, activeProject, userRole, projectProgress } = useProject();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  const handleCopyCode = () => {
+    if (!activeProject) return;
+    navigator.clipboard.writeText(activeProject.projectCode).then(() => {
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    }).catch(() => {});
+  };
 
   // Derived stats
   const totalProjects = projects.length;
@@ -177,11 +188,6 @@ export default function DashboardPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Active Project</CardTitle>
-                {activeProject && (
-                  <Badge variant="outline" className="font-mono text-[10px]">
-                    {activeProject.projectCode}
-                  </Badge>
-                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -191,6 +197,31 @@ export default function DashboardPage() {
                     <h4 className="font-semibold text-lg">{activeProject.projectName}</h4>
                     <p className="text-sm text-muted-foreground line-clamp-3">
                       {activeProject.projectDescription}
+                    </p>
+                  </div>
+
+                  {/* ── Project Code ─────────────────────────────────── */}
+                  <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Project Code</p>
+                    <div className="flex items-center gap-2">
+                      <span className="flex-1 font-mono text-lg font-bold tracking-widest text-foreground">
+                        {activeProject.projectCode}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 shrink-0"
+                        onClick={handleCopyCode}
+                      >
+                        {copiedCode ? (
+                          <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="h-3.5 w-3.5" /> Copy</>
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Share this code so teammates can request to join.
                     </p>
                   </div>
                   
