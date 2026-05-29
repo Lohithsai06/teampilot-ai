@@ -1,36 +1,111 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TeamPilot AI
+
+AI-powered software execution operating system for teams. Plan, collaborate, and execute software projects intelligently.
+
+## Features
+
+- AI-Powered Planning - Discuss ideas with AI and get intelligent roadmaps
+- Visual Roadmaps - See your project journey from idea to deployment
+- Team Collaboration - Assign roles, track workload, share context
+- GitHub Integration - Track commits with AI-powered summaries
+- Prompt Generation - Generate IDE-ready prompts for Cursor, TRAE, Bolt, v0
+- Kanban Execution - Drag-and-drop task management
+- Three Theme Modes - Light, Dark, and Premium Hybrid
+
+## Tech Stack
+
+- Next.js 16 App Router
+- TypeScript
+- Tailwind CSS v4
+- Shadcn-style UI Components
+- Framer Motion
+- Lucide Icons
+- Supabase (Database & Auth)
+- Recharts (Analytics)
 
 ## Getting Started
 
-First, run the development server:
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+3. Copy `.env.example` to `.env.local` and configure your environment variables:
+   ```bash
+   cp .env.example .env.local
+   ```
+
+4. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+5. Open [http://localhost:3000](http://localhost:3000)
+
+## Project Structure
+
+```
+src/
+├── app/                    # Next.js App Router pages
+│   ├── dashboard/          # Dashboard home
+│   ├── ai-workspace/       # AI chat & prompt generation
+│   ├── projects/           # Project management
+│   ├── roadmap/            # Roadmap timeline
+│   ├── kanban/             # Kanban board
+│   ├── team/               # Team management
+│   ├── github/             # GitHub integration
+│   ├── settings/           # User settings
+│   ├── login/              # Login page
+│   └── register/           # Registration page
+├── components/
+│   ├── ui/                 # Base UI components
+│   ├── common/             # Shared components
+│   ├── landing/            # Landing page sections
+│   ├── auth/               # Authentication forms
+│   └── ...                 # Feature-specific components
+├── lib/                    # Utilities and configs
+├── context/                # React contexts
+├── hooks/                  # Custom hooks
+├── types/                  # TypeScript types
+└── services/               # API services
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Pages
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Route | Description |
+|-------|-------------|
+| `/` | Landing page |
+| `/login` | User login |
+| `/register` | User registration |
+| `/dashboard` | Main dashboard |
+| `/ai-workspace` | AI chat and prompt generation |
+| `/projects` | Project list and management |
+| `/roadmap` | Project roadmap timeline |
+| `/kanban` | Task board |
+| `/team` | Team members and workload |
+| `/github` | GitHub integration dashboard |
+| `/settings` | User and app settings |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Theme Customization
 
-## Learn More
+The app supports three themes:
+- **Light** - Clean, professional SaaS feel
+- **Dark** - Easy on the eyes for long coding sessions
+- **Hybrid** - Futuristic glassmorphism with violet accents
 
-To learn more about Next.js, take a look at the following resources:
+Switch themes using the theme toggle in the navbar or in Settings.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Database
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Uses Supabase for:
+- User authentication
+- Project data storage
+- Real-time collaboration
+- Row-level security
 
-## Deploy on Vercel
+Configure Supabase by adding your project URL and anon key to `.env.local`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## License
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT
