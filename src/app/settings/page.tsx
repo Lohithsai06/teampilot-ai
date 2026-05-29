@@ -15,6 +15,7 @@ import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { LoadingSpinner } from "@/components/common/LoadingSpinner";
 import { AvatarUpload } from "@/components/auth/AvatarUpload";
+import { useAISettings } from "@/lib/useAISettings";
 import {
   Settings,
   User,
@@ -34,6 +35,10 @@ import {
   ShieldCheck,
   Calendar,
   Clock as ClockIcon,
+  CheckCircle2,
+  XCircle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 const themePreviews = [
@@ -52,6 +57,44 @@ export default function SettingsPage() {
   const [formData, setFormData] = useState({
     displayName: "",
   });
+
+  // ── AI Settings (real Firestore) ──────────────────────────────────────────
+  const { settings: aiSettings, saving: aiSaving, saveSettings: saveAISettings,
+    geminiConfigured, openRouterConfigured } = useAISettings();
+  const [aiForm, setAIForm] = useState({
+    geminiApiKey: "",
+    openRouterApiKey: "",
+    preferredProvider: "none" as "gemini" | "openrouter" | "none",
+    enableFallback: true,
+  });
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showORKey, setShowORKey] = useState(false);
+  const [aiSaveMsg, setAISaveMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Populate AI form from Firestore once loaded
+  useEffect(() => {
+    setAIForm({
+      geminiApiKey: aiSettings.geminiApiKey,
+      openRouterApiKey: aiSettings.openRouterApiKey,
+      preferredProvider: aiSettings.preferredProvider,
+      enableFallback: aiSettings.enableFallback,
+    });
+  }, [aiSettings]);
+
+  const handleSaveAIKeys = async () => {
+    try {
+      await saveAISettings({
+        geminiApiKey: aiForm.geminiApiKey,
+        openRouterApiKey: aiForm.openRouterApiKey,
+        preferredProvider: aiForm.preferredProvider,
+        enableFallback: aiForm.enableFallback,
+      });
+      setAISaveMsg({ type: "success", text: "API keys saved successfully!" });
+      setTimeout(() => setAISaveMsg(null), 3000);
+    } catch {
+      setAISaveMsg({ type: "error", text: "Failed to save API keys." });
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -299,30 +342,130 @@ export default function SettingsPage() {
             <Card>
               <CardHeader>
                 <CardTitle>AI Provider Configuration</CardTitle>
-                <CardDescription>Configure API keys for AI features</CardDescription>
+                <CardDescription>Configure API keys for AI features. Keys are stored securely in your account.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {[
-                  { name: "Gemini API Key", placeholder: "AIza..." },
-                  { name: "OpenRouter API Key", placeholder: "sk-or-..." },
-                  { name: "OpenAI API Key", placeholder: "sk-..." },
-                  { name: "Claude API Key", placeholder: "sk-ant-..." },
-                ].map((provider) => (
-                  <div key={provider.name} className="space-y-2">
-                    <label className="text-sm font-medium">{provider.name}</label>
-                    <div className="flex gap-2">
-                      <Input type="password" placeholder={provider.placeholder} />
-                      <Button variant="outline" size="icon">
-                        <Key className="h-4 w-4" />
-                      </Button>
-                    </div>
+              <CardContent className="space-y-6">
+
+                {/* Status overview */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">Gemini</span>
+                    {geminiConfigured ? (
+                      <Badge variant="success" className="gap-1">
+                        <CheckCircle2 className="h-3 w-3" /> Connected
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="gap-1">
+                        <XCircle className="h-3 w-3" /> Not set
+                      </Badge>
+                    )}
                   </div>
-                ))}
-                <div className="flex items-center gap-2 pt-4">
-                  <input type="checkbox" className="rounded border-input" defaultChecked />
-                  <span className="text-sm">Enable AI fallback when primary provider fails</span>
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <span className="text-sm font-medium">OpenRouter</span>
+                    {openRouterConfigured ? (
+                      <Badge variant="success" className="gap-1">
+                        <CheckCircle2 className="h-3 w-3" /> Connected
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="gap-1">
+                        <XCircle className="h-3 w-3" /> Not set
+                      </Badge>
+                    )}
+                  </div>
                 </div>
-                <Button className="w-full">Save API Keys</Button>
+
+                {/* Gemini Key */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <Key className="h-3.5 w-3.5" /> Gemini API Key
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      type={showGeminiKey ? "text" : "password"}
+                      placeholder="AIza..."
+                      value={aiForm.geminiApiKey}
+                      onChange={(e) => setAIForm(prev => ({ ...prev, geminiApiKey: e.target.value }))}
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setShowGeminiKey(v => !v)}
+                    >
+                      {showGeminiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* OpenRouter Key */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <Key className="h-3.5 w-3.5" /> OpenRouter API Key
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      type={showORKey ? "text" : "password"}
+                      placeholder="sk-or-..."
+                      value={aiForm.openRouterApiKey}
+                      onChange={(e) => setAIForm(prev => ({ ...prev, openRouterApiKey: e.target.value }))}
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setShowORKey(v => !v)}
+                    >
+                      {showORKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Preferred Provider */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Preferred Provider</label>
+                  <div className="flex gap-2">
+                    {(["gemini", "openrouter", "none"] as const).map((p) => (
+                      <Button
+                        key={p}
+                        variant={aiForm.preferredProvider === p ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1 capitalize"
+                        onClick={() => setAIForm(prev => ({ ...prev, preferredProvider: p }))}
+                      >
+                        {p === "none" ? "Auto" : p}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">"Auto" uses whichever key is available.</p>
+                </div>
+
+                {/* Fallback toggle */}
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                  <input
+                    type="checkbox"
+                    id="fallback"
+                    className="rounded border-input h-4 w-4"
+                    checked={aiForm.enableFallback}
+                    onChange={(e) => setAIForm(prev => ({ ...prev, enableFallback: e.target.checked }))}
+                  />
+                  <label htmlFor="fallback" className="text-sm cursor-pointer">
+                    Enable AI fallback when primary provider fails
+                  </label>
+                </div>
+
+                {/* Save message */}
+                {aiSaveMsg && (
+                  <div className={`p-3 rounded-lg text-sm ${
+                    aiSaveMsg.type === "success"
+                      ? "bg-success/10 text-success"
+                      : "bg-destructive/10 text-destructive"
+                  }`}>
+                    {aiSaveMsg.text}
+                  </div>
+                )}
+
+                <Button className="w-full gap-2" onClick={handleSaveAIKeys} disabled={aiSaving}>
+                  {aiSaving ? <LoadingSpinner className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                  {aiSaving ? "Saving..." : "Save API Keys"}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>

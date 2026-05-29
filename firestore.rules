@@ -86,5 +86,29 @@ service cloud.firestore {
       // Status updates are handled by delete + re-create (no update needed)
       allow update: if false;
     }
+
+    // ─── users ───────────────────────────────────────────────────────────────
+    // Users can read and write their own document (profile, AI settings, etc.)
+    match /users/{userId} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+
+    // ─── aiChats ─────────────────────────────────────────────────────────────
+    // Chat messages are scoped to a project; only project members can access
+    match /aiChats/{chatId} {
+      // Project members can read all chat messages for their project
+      allow read: if isAuth() && isMember(resource.data.projectId);
+
+      // Any project member can write a chat message for their project
+      allow create: if isAuth()
+        && request.resource.data.userId == request.auth.uid
+        && isMember(request.resource.data.projectId);
+
+      // No updates or deletes — messages are immutable
+      allow update, delete: if false;
+
+      // Allow listing for real-time queries
+      allow list: if isAuth();
+    }
   }
 }
