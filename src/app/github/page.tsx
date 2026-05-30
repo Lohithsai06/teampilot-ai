@@ -55,6 +55,7 @@ import {
 import { db } from "@/lib/firebase";
 import { useGitHubActivity } from "@/lib/useGitHubActivity";
 import { DevelopmentActivityTimeline } from "@/components/project/DevelopmentActivityTimeline";
+import { useGitHubSync } from "@/lib/useGitHubSync";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
