@@ -53,6 +53,8 @@ import {
   getDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useGitHubActivity } from "@/lib/useGitHubActivity";
+import { DevelopmentActivityTimeline } from "@/components/project/DevelopmentActivityTimeline";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -341,6 +343,10 @@ export default function GithubPage() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
 
   const projectId = activeProject?.projectId;
+
+  // ── GitHub Activity ──────────────────────────────────────────────────────────
+  const { activities: githubActivities, loading: githubLoading } =
+    useGitHubActivity(projectId);
 
   // ── 1. Repository ────────────────────────────────────────────────────────────
 
@@ -1128,6 +1134,12 @@ export default function GithubPage() {
             </Card>
           </motion.div>
         </div>
+
+        {/* ── Development Activity Timeline ──────────────────────────────────── */}
+        <DevelopmentActivityTimeline
+          activities={githubActivities}
+          loading={githubLoading}
+        />
       </motion.div>
     </DashboardLayout>
   );
