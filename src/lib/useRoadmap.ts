@@ -38,6 +38,8 @@ export interface RoadmapPhase {
   phaseNumber: number;
   title: string;
   description: string;
+  purpose?: string;
+  expectedOutcome?: string;
   objectives: string[];
   deliverables: string[];
   estimatedDuration: string;
@@ -366,6 +368,8 @@ export function useRoadmap(
             phaseNumber: phase.phaseNumber || i + 1,
             title: phase.title || `Phase ${i + 1}`,
             description: phase.description || "",
+            purpose: phase.purpose || "",
+            expectedOutcome: phase.expectedOutcome || "",
             objectives: Array.isArray(phase.objectives) ? phase.objectives : [],
             deliverables: Array.isArray(phase.deliverables) ? phase.deliverables : [],
             estimatedDuration: phase.estimatedDuration || "TBD",

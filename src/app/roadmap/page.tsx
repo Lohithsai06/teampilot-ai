@@ -28,8 +28,12 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useProject } from "@/context/ProjectContext";
 import { useAISettings } from "@/lib/useAISettings";
-import { useRoadmap, type PhaseStatus } from "@/lib/useRoadmap";
+import { useRoadmap, type PhaseStatus, type RoadmapPhase } from "@/lib/useRoadmap";
 import Link from "next/link";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { PhaseDetailsModal } from "@/components/roadmap/PhaseDetailsModal";
+import { type Task } from "@/lib/aiSystemPrompt";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -221,6 +225,52 @@ export default function RoadmapPage() {
   } = useRoadmap(activeProject?.projectId, user?.uid);
 
   const isLeader = userRole === "leader";
+
+  // Modal and real-time task subscription
+  const [selectedPhaseId, setSelectedPhaseId] = React.useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = React.useState(true);
+
+  const selectedPhase = React.useMemo(() => {
+    if (!selectedPhaseId) return null;
+    return phases.find((p) => p.id === selectedPhaseId) || null;
+  }, [selectedPhaseId, phases]);
+
+  React.useEffect(() => {
+    if (!activeProject?.projectId) {
+      setTasks([]);
+      setTasksLoading(false);
+      return;
+    }
+
+    setTasksLoading(true);
+    const q = query(
+      collection(db, "tasks"),
+      where("projectId", "==", activeProject.projectId)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Task[];
+        setTasks(items);
+        setTasksLoading(false);
+      },
+      (err) => {
+        console.error("[RoadmapPage] Tasks listener error:", err);
+        setTasksLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [activeProject?.projectId]);
+
+  const handlePhaseClick = (phase: RoadmapPhase) => {
+    setSelectedPhaseId(phase.id);
+    setIsModalOpen(true);
+  };
 
   // Debug logging for button visibility
   React.useEffect(() => {
@@ -530,7 +580,8 @@ export default function RoadmapPage() {
                           : isBlocked
                           ? "border-destructive/50"
                           : ""
-                      } hover:shadow-soft-lg transition-shadow`}
+                      } hover:shadow-soft-lg transition-shadow cursor-pointer`}
+                      onClick={() => handlePhaseClick(phase)}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between gap-4">
@@ -685,9 +736,10 @@ export default function RoadmapPage() {
                                 variant="outline"
                                 size="sm"
                                 className="gap-1 h-8 text-xs"
-                                onClick={() =>
-                                  updatePhaseStatus(phase.id, "blocked")
-                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updatePhaseStatus(phase.id, "blocked");
+                                }}
                               >
                                 <XCircle className="h-3 w-3" />
                                 Mark Blocked
@@ -695,7 +747,10 @@ export default function RoadmapPage() {
                               <Button
                                 size="sm"
                                 className="gap-1 h-8 text-xs"
-                                onClick={() => completePhase(phase.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  completePhase(phase.id);
+                                }}
                               >
                                 <CheckCircle2 className="h-3 w-3" />
                                 Mark Complete
@@ -715,9 +770,10 @@ export default function RoadmapPage() {
                               variant="outline"
                               size="sm"
                               className="gap-1 h-8 text-xs"
-                              onClick={() =>
-                                updatePhaseStatus(phase.id, "in_progress")
-                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updatePhaseStatus(phase.id, "in_progress");
+                              }}
                             >
                               <ArrowRight className="h-3 w-3" />
                               Resume Phase
@@ -733,6 +789,27 @@ export default function RoadmapPage() {
           </div>
         </div>
       </motion.div>
+
+      <PhaseDetailsModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedPhaseId(null);
+        }}
+        phase={selectedPhase}
+        tasks={tasks}
+        projectId={activeProject.projectId}
+        projectMembers={activeProjectMembers}
+        isLeader={isLeader}
+        onCompletePhase={completePhase}
+        onUpdatePhaseStatus={updatePhaseStatus}
+        aiSettings={{
+          geminiApiKey: settings.geminiApiKey,
+          openRouterApiKey: settings.openRouterApiKey,
+          preferredProvider: settings.preferredProvider,
+          fallbackProvider: settings.fallbackProvider,
+        }}
+      />
     </DashboardLayout>
   );
 }

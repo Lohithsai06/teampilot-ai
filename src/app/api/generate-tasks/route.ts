@@ -5,62 +5,81 @@ export const runtime = "edge";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface RoadmapRequestBody {
+interface TeamMemberInput {
+  id: string;
+  name: string;
+  role: string;
+}
+
+interface PhaseInput {
+  phaseNumber: number;
+  title: string;
+  description: string;
+  objectives: string[];
+  deliverables: string[];
+}
+
+interface TasksRequestBody {
   geminiApiKey?: string;
   openRouterApiKey?: string;
   preferredProvider?: "gemini" | "openrouter" | "none";
   fallbackProvider?: "gemini" | "openrouter" | "none";
-  projectContext: {
-    projectName: string;
-    projectDescription: string;
-    teamMembers: { name: string; role: string }[];
-    leaderName: string;
-    projectCode: string;
-  };
+  phase: PhaseInput;
+  teamMembers: TeamMemberInput[];
+  projectId: string;
 }
 
-// ─── System prompt for roadmap generation ─────────────────────────────────────
+// ─── System prompt for task generation ────────────────────────────────────────
 
-function buildRoadmapPrompt(context: RoadmapRequestBody["projectContext"]): string {
-  const memberList = context.teamMembers
-    .map((m) => `  - ${m.name} (${m.role})`)
+function buildTasksPrompt(
+  phase: PhaseInput,
+  teamMembers: TeamMemberInput[],
+  projectId: string
+): string {
+  const memberList = teamMembers
+    .map((m) => `  - ${m.name} (${m.role}, id: ${m.id})`)
     .join("\n");
+
+  const objectivesList = phase.objectives.map((o) => `  - ${o}`).join("\n");
+  const deliverablesList = phase.deliverables.map((d) => `  - ${d}`).join("\n");
 
   return `You are TeamPilot PM Agent — an elite Technical Program Manager.
 
-Your task is to generate a structured project execution roadmap.
+Your task is to generate a list of concrete engineering, design, or project tasks to implement a specific roadmap phase.
 
 ====================================================
-PROJECT CONTEXT
+PROJECT CONTEXT & PHASE DETAILS
 ====================================================
 
-Project Name: ${context.projectName}
-Project Description: ${context.projectDescription || "Not provided"}
-Project Code: ${context.projectCode}
-Leader: ${context.leaderName}
+ProjectId: ${projectId}
 
-Team Members:
-${memberList || "  No members yet"}
+Roadmap Phase Details:
+- Phase Number: ${phase.phaseNumber}
+- Title: ${phase.title}
+- Description: ${phase.description}
+
+Phase Objectives:
+${objectivesList || "  None provided"}
+
+Phase Deliverables:
+${deliverablesList || "  None provided"}
+
+Available Team Members:
+${memberList || "  No team members"}
 
 ====================================================
 INSTRUCTIONS
 ====================================================
 
-Generate a comprehensive project execution roadmap with 4-6 phases.
+Generate 4 to 8 realistic, concrete, actionable tasks that must be completed to deliver this phase successfully.
 
-Each phase must include:
-- phaseNumber (integer, starting from 1)
-- title (short phase name)
-- description (1-2 sentence description)
-- purpose (1 sentence explaining the core purpose of this phase)
-- expectedOutcome (1 sentence explaining the expected final outcome of this phase)
-- objectives (array of 3-5 specific objectives)
-- deliverables (array of 3-5 concrete deliverables)
-- estimatedDuration (human readable, e.g. "2 weeks")
-- dependencies (array of dependency descriptions, empty for phase 1)
-- risks (array of 1-3 potential risks)
-
-Also provide a projectSummary (2-3 sentence overview of the project).
+Assign each task to one of the available team members listed above.
+- Tasks must be distributed intelligently among team members based on their roles.
+- For each task, you must output their exact id, name, and role.
+- Each task must have a priority ("high", "medium", or "low").
+- All generated tasks must have status "todo".
+- All generated tasks must have phase equal to ${phase.phaseNumber}.
+- All generated tasks must have sprint equal to 1.
 
 ====================================================
 RESPONSE FORMAT (CRITICAL)
@@ -71,19 +90,19 @@ You MUST respond with ONLY valid JSON. No markdown, no explanation, no code bloc
 The JSON must follow this exact structure:
 
 {
-  "projectSummary": "Brief project overview...",
-  "phases": [
+  "tasks": [
     {
-      "phaseNumber": 1,
-      "title": "Project Foundation",
-      "description": "...",
-      "purpose": "...",
-      "expectedOutcome": "...",
-      "objectives": ["...", "..."],
-      "deliverables": ["...", "..."],
-      "estimatedDuration": "1 week",
-      "dependencies": [],
-      "risks": ["..."]
+      "projectId": "${projectId}",
+      "title": "Setup Firebase Collections",
+      "description": "Create Firestore collections and deploy security rules for authentication and project features.",
+      "assignedTo": "member_user_id_here",
+      "assignedToName": "Member Name",
+      "assignedToRole": "leader",
+      "priority": "high",
+      "status": "todo",
+      "phase": ${phase.phaseNumber},
+      "sprint": 1,
+      "createdBy": "pm-agent"
     }
   ]
 }
@@ -92,10 +111,7 @@ IMPORTANT:
 - Return ONLY the JSON object, nothing else
 - Do NOT wrap in markdown code blocks
 - Do NOT add any text before or after the JSON
-- Ensure all arrays contain strings only
-- Generate realistic, actionable phases for this specific project
-- Phase titles should follow this general pattern: Foundation → Core Features → Advanced Features → Testing & QA → Deployment & Launch
-- Adapt the phases to match the project's actual needs`;
+- Ensure all fields are filled out correctly using the exact userId for assignedTo`;
 }
 
 // ─── AI Provider calls ────────────────────────────────────────────────────────
@@ -116,7 +132,7 @@ async function callGemini(
         role: "user",
         parts: [
           {
-            text: "Generate the project execution roadmap now. Return ONLY the JSON object.",
+            text: "Generate the phase tasks now. Return ONLY the JSON object.",
           },
         ],
       },
@@ -156,7 +172,7 @@ async function callOpenRouter(
         {
           role: "user",
           content:
-            "Generate the project execution roadmap now. Return ONLY the JSON object.",
+            "Generate the phase tasks now. Return ONLY the JSON object.",
         },
       ],
       temperature: 0.4,
@@ -182,76 +198,65 @@ async function callOpenRouter(
 
 // ─── Parse AI response ────────────────────────────────────────────────────────
 
-function parseRoadmapResponse(raw: string): {
-  projectSummary: string;
-  phases: Array<{
-    phaseNumber: number;
+function parseTasksResponse(raw: string): {
+  tasks: Array<{
+    projectId: string;
     title: string;
     description: string;
-    purpose?: string;
-    expectedOutcome?: string;
-    objectives: string[];
-    deliverables: string[];
-    estimatedDuration: string;
-    dependencies: string[];
-    risks: string[];
+    assignedTo: string;
+    assignedToName: string;
+    assignedToRole: string;
+    priority: "high" | "medium" | "low";
+    status: "todo";
+    phase: number;
+    sprint: number;
+    createdBy: string;
   }>;
 } {
-  // Try direct JSON parse
   try {
     return JSON.parse(raw);
   } catch {
-    // Attempt to extract JSON from markdown code blocks or surrounding text
+    // Attempt parsing in case of markdown wrapping
   }
 
-  // Try extracting from code block
   const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (codeBlockMatch) {
     try {
       return JSON.parse(codeBlockMatch[1].trim());
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
 
-  // Try extracting any JSON object
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {
       return JSON.parse(jsonMatch[0]);
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
 
-  throw new Error("Failed to parse AI roadmap response as JSON");
+  throw new Error("Failed to parse AI tasks response as JSON");
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
   try {
-    console.log(`[generate-roadmap] ── API request received ──`);
+    console.log(`[generate-tasks] ── API request received ──`);
 
-    const body: RoadmapRequestBody = await request.json();
+    const body: TasksRequestBody = await request.json();
     const {
       geminiApiKey,
       openRouterApiKey,
       preferredProvider,
       fallbackProvider,
-      projectContext,
+      phase,
+      teamMembers,
+      projectId,
     } = body;
 
-    console.log(`[generate-roadmap]   projectName: ${projectContext?.projectName}`);
-    console.log(`[generate-roadmap]   geminiApiKey exists: ${!!geminiApiKey}`);
-    console.log(`[generate-roadmap]   openRouterApiKey exists: ${!!openRouterApiKey}`);
-    console.log(`[generate-roadmap]   preferredProvider: ${preferredProvider}`);
-    console.log(`[generate-roadmap]   fallbackProvider: ${fallbackProvider}`);
-
-    if (!projectContext?.projectName) {
-      console.error(`[generate-roadmap] ❌ Missing project context`);
+    if (!projectId || !phase || !teamMembers) {
+      console.error(`[generate-tasks] ❌ Missing inputs`);
       return NextResponse.json(
-        { error: "Project context is required." },
+        { error: "ProjectId, phase details, and teamMembers are required." },
         { status: 400 }
       );
     }
@@ -265,27 +270,22 @@ export async function POST(request: NextRequest) {
         ? fallbackProvider
         : "openrouter";
 
-    console.log(`[generate-roadmap]   Resolved preferred: ${resolvedPreferred}`);
-    console.log(`[generate-roadmap]   Resolved fallback: ${resolvedFallback}`);
+    console.log(`[generate-tasks]   Resolved preferred: ${resolvedPreferred}`);
+    console.log(`[generate-tasks]   Resolved fallback: ${resolvedFallback}`);
 
-    const systemPrompt = buildRoadmapPrompt(projectContext);
+    const systemPrompt = buildTasksPrompt(phase, teamMembers, projectId);
 
-    // Build provider attempt sequence
     const attempts: { name: "gemini" | "openrouter"; key?: string }[] = [];
     attempts.push({
       name: resolvedPreferred,
-      key:
-        resolvedPreferred === "gemini" ? geminiApiKey : openRouterApiKey,
+      key: resolvedPreferred === "gemini" ? geminiApiKey : openRouterApiKey,
     });
     if (resolvedFallback !== resolvedPreferred) {
       attempts.push({
         name: resolvedFallback,
-        key:
-          resolvedFallback === "gemini" ? geminiApiKey : openRouterApiKey,
+        key: resolvedFallback === "gemini" ? geminiApiKey : openRouterApiKey,
       });
     }
-
-    console.log(`[generate-roadmap]   Attempts: ${attempts.map((a) => a.name).join(", ")}`);
 
     let lastError: Error | null = null;
     let responseText = "";
@@ -293,63 +293,55 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < attempts.length; i++) {
       const attempt = attempts[i];
-
-      console.log(`[generate-roadmap]   Attempt ${i + 1}: ${attempt.name}`);
+      console.log(`[generate-tasks]   Attempt ${i + 1}: ${attempt.name}`);
 
       if (!attempt.key) {
         const msg = `Missing API key for ${attempt.name}`;
-        console.warn(`[generate-roadmap]   ⚠️  ${msg}`);
+        console.warn(`[generate-tasks]   ⚠️  ${msg}`);
         lastError = new Error(msg);
         continue;
       }
 
       try {
-        console.log(`[generate-roadmap]   Calling ${attempt.name}...`);
+        console.log(`[generate-tasks]   Calling ${attempt.name}...`);
         if (attempt.name === "gemini") {
           responseText = await callGemini(attempt.key, systemPrompt);
         } else {
           responseText = await callOpenRouter(attempt.key, systemPrompt);
         }
-        console.log(`[generate-roadmap]   ✅ ${attempt.name} succeeded, got ${responseText.length} chars`);
+        console.log(`[generate-tasks]   ✅ ${attempt.name} succeeded, got ${responseText.length} chars`);
         usedProvider = attempt.name;
         break;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.error(`[generate-roadmap]   ❌ ${attempt.name} failed: ${errMsg}`);
+        console.error(`[generate-tasks]   ❌ ${attempt.name} failed: ${errMsg}`);
         lastError = err instanceof Error ? err : new Error(String(err));
       }
     }
 
     if (!usedProvider || !responseText) {
       const errorMsg = lastError ? lastError.message : "Unknown error";
-      console.error(`[generate-roadmap] ❌ All providers failed: ${errorMsg}`);
+      console.error(`[generate-tasks] ❌ All providers failed: ${errorMsg}`);
       return NextResponse.json(
         {
-          error:
-            "Unable to generate roadmap. Check API keys in Settings.",
+          error: "Unable to generate tasks. Check API keys in Settings.",
           details: errorMsg,
         },
         { status: 502 }
       );
     }
 
-    // Parse the structured response
     try {
-      const parsed = parseRoadmapResponse(responseText);
-
-      console.log(
-        `[generate-roadmap] ✅ Generated ${parsed.phases.length} phases via ${usedProvider}`
-      );
+      const parsed = parseTasksResponse(responseText);
+      console.log(`[generate-tasks] ✅ Generated ${parsed.tasks.length} tasks via ${usedProvider}`);
 
       return NextResponse.json({
-        projectSummary: parsed.projectSummary,
-        phases: parsed.phases,
+        tasks: parsed.tasks,
         provider: usedProvider,
       });
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : "Unknown parse error";
-      console.error(`[generate-roadmap] ❌ Parse error: ${parseMsg}`);
-      console.error(`[generate-roadmap]   Response text: ${responseText.substring(0, 200)}...`);
+      console.error(`[generate-tasks] ❌ Parse error: ${parseMsg}`);
       return NextResponse.json(
         {
           error: "Failed to parse AI response",
@@ -359,13 +351,11 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Unknown error occurred";
-    console.error("[generate-roadmap] ❌ API error:", message);
-    console.error("[generate-roadmap]   Full error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error occurred";
+    console.error("[generate-tasks] ❌ API error:", message);
     return NextResponse.json(
       {
-        error: "Failed to generate roadmap.",
+        error: "Failed to generate tasks.",
         details: message,
       },
       { status: 500 }
