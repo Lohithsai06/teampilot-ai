@@ -29,6 +29,7 @@ function toMillis(value: unknown): number {
   if (!value) return 0;
   if (value instanceof Timestamp) return value.toMillis();
   if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") return new Date(value).getTime();
   if (typeof value === "object" && typeof (value as any).toMillis === "function") {
     return (value as any).toMillis();
   }
@@ -65,6 +66,17 @@ export function useGitHubActivity(projectId: string | undefined) {
           const items = snap.docs
             .map((doc) => {
               const data = doc.data();
+              let parsedCommittedAt: Timestamp | null = null;
+              if (data.committedAt instanceof Timestamp) {
+                parsedCommittedAt = data.committedAt;
+              } else if (data.committedAt?.seconds) {
+                parsedCommittedAt = new Timestamp(data.committedAt.seconds, data.committedAt.nanoseconds ?? 0);
+              } else if (typeof data.committedAt === "string") {
+                parsedCommittedAt = Timestamp.fromDate(new Date(data.committedAt));
+              } else if (data.committedAt instanceof Date) {
+                parsedCommittedAt = Timestamp.fromDate(data.committedAt);
+              }
+
               return {
                 id: doc.id,
                 projectId: data.projectId,
@@ -78,11 +90,7 @@ export function useGitHubActivity(projectId: string | undefined) {
                 linesAdded: data.linesAdded ?? 0,
                 linesRemoved: data.linesRemoved ?? 0,
                 filesChanged: data.filesChanged ?? 0,
-                committedAt: data.committedAt instanceof Timestamp
-                  ? data.committedAt
-                  : data.committedAt?.seconds
-                    ? new Timestamp(data.committedAt.seconds, data.committedAt.nanoseconds ?? 0)
-                    : null,
+                committedAt: parsedCommittedAt,
               } as GitHubActivity;
             })
             .sort((a, b) => toMillis(b.committedAt) - toMillis(a.committedAt)); // Newest first

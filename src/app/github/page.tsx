@@ -95,10 +95,24 @@ interface ActivityItem {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatTimestamp(ts: Timestamp | null | undefined): string {
+function formatTimestamp(ts: any): string {
   if (!ts) return "Unknown date";
   try {
-    const d = ts.toDate();
+    let d: Date;
+    if (ts instanceof Timestamp) {
+      d = ts.toDate();
+    } else if (ts instanceof Date) {
+      d = ts;
+    } else if (typeof ts === "object" && typeof ts.toDate === "function") {
+      d = ts.toDate();
+    } else if (typeof ts === "object" && typeof ts.seconds === "number") {
+      d = new Date(ts.seconds * 1000);
+    } else {
+      d = new Date(ts);
+    }
+
+    if (isNaN(d.getTime())) return "Unknown date";
+
     const now = Date.now();
     const diff = now - d.getTime();
     if (diff < 60_000) return "just now";
@@ -370,6 +384,33 @@ export default function GithubPage() {
   const { activities: githubActivities, loading: githubLoading } =
     useGitHubActivity(projectId);
 
+  // Auto-sync repository commits on page load if connected but timeline is empty
+  const autoSyncAttempted = React.useRef(false);
+
+  useEffect(() => {
+    autoSyncAttempted.current = false;
+  }, [projectId]);
+
+  useEffect(() => {
+    if (
+      projectId &&
+      repo &&
+      !githubLoading &&
+      githubActivities.length === 0 &&
+      !syncInProgress &&
+      !autoSyncAttempted.current
+    ) {
+      autoSyncAttempted.current = true;
+      syncRepository(projectId, repo.repoUrl).then((result) => {
+        if (result.success) {
+          console.log(`[GitHub] Auto-synced ${result.commitsAdded} commits`);
+        } else {
+          console.warn("[GitHub] Auto-sync warning/error:", result.error);
+        }
+      });
+    }
+  }, [projectId, repo, githubLoading, githubActivities.length, syncInProgress, syncRepository]);
+
   // ── 1. Repository ────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -451,7 +492,7 @@ export default function GithubPage() {
   useEffect(() => {
     if (!projectId) return;
     const q = query(
-      collection(db, "kanbanTasks"),
+      collection(db, "tasks"),
       where("projectId", "==", projectId)
     );
     const unsub = onSnapshot(q, (snap) => {

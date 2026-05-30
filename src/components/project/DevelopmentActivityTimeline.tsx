@@ -22,10 +22,24 @@ interface DevelopmentActivityTimelineProps {
   loading: boolean;
 }
 
-function formatTimestamp(ts: Timestamp | null | undefined): string {
+function formatTimestamp(ts: any): string {
   if (!ts) return "Unknown date";
   try {
-    const d = ts.toDate();
+    let d: Date;
+    if (ts instanceof Timestamp) {
+      d = ts.toDate();
+    } else if (ts instanceof Date) {
+      d = ts;
+    } else if (typeof ts === "object" && typeof ts.toDate === "function") {
+      d = ts.toDate();
+    } else if (typeof ts === "object" && typeof ts.seconds === "number") {
+      d = new Date(ts.seconds * 1000);
+    } else {
+      d = new Date(ts);
+    }
+
+    if (isNaN(d.getTime())) return "Unknown date";
+
     const now = Date.now();
     const diff = now - d.getTime();
     if (diff < 60_000) return "just now";

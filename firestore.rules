@@ -116,5 +116,59 @@ service cloud.firestore {
       // Messages are immutable
       allow update, delete: if false;
     }
+
+    // ─── githubRepositories ──────────────────────────────────────────────────
+    match /githubRepositories/{repoId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isMember(resource.data.projectId);
+    }
+
+    // ─── githubActivity ──────────────────────────────────────────────────────
+    match /githubActivity/{activityId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isMember(resource.data.projectId);
+    }
+
+    // ─── githubReports ───────────────────────────────────────────────────────
+    match /githubReports/{reportId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isMember(resource.data.projectId);
+    }
+
+    // ─── tasks ───────────────────────────────────────────────────────────────
+    match /tasks/{taskId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isMember(resource.data.projectId);
+    }
+
+    // ─── agentSessions ───────────────────────────────────────────────────────
+    match /agentSessions/{sessionId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isMember(resource.data.projectId);
+    }
+
+    // ─── generatedPrompts ────────────────────────────────────────────────────
+    match /generatedPrompts/{promptId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isMember(resource.data.projectId);
+    }
   }
 }
