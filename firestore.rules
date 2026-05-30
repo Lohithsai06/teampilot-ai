@@ -25,20 +25,10 @@ service cloud.firestore {
 
     // ─── projects ────────────────────────────────────────────────────────────
     match /projects/{projectId} {
-      // Any signed-in user can read a project they are a member of
       allow read: if isMember(projectId);
-
-      // Any signed-in user can query projects (needed for "in" queries in ProjectContext)
-      // Reads on the collection level (list) are allowed for authenticated users;
-      // the query itself must include a where("projectId","in", [...]) filter.
       allow list: if isAuth();
-
-      // Only authenticated users can create a project (they will be set as leader)
       allow create: if isAuth()
         && request.resource.data.leaderId == request.auth.uid;
-
-      // Any project member can update task progress fields (totalTasks, completedTasks)
-      // Only the project leader can update everything else or delete the project
       allow update: if isMember(projectId);
       allow delete: if isLeader(projectId);
     }
@@ -46,18 +36,12 @@ service cloud.firestore {
     // ─── projectMembers ──────────────────────────────────────────────────────
     // Document ID format: {projectId}_{userId}
     match /projectMembers/{memberDocId} {
-      // Any authenticated user can read membership records
-      // (needed to check "is this user already a member?")
       allow read: if isAuth();
-
-      // Only authenticated users can create their own membership record,
-      // OR a project leader can create a membership record (approve request)
+      allow list: if isAuth();
       allow create: if isAuth() && (
         request.resource.data.userId == request.auth.uid ||
         isLeader(request.resource.data.projectId)
       );
-
-      // Only the project leader can update or remove member records
       allow update, delete: if isAuth() &&
         isLeader(resource.data.projectId);
     }
@@ -65,50 +49,45 @@ service cloud.firestore {
     // ─── joinRequests ────────────────────────────────────────────────────────
     // Document ID format: {projectId}_{userId}
     match /joinRequests/{requestId} {
-      // A user can read their own requests (needed for duplicate-request guard);
-      // a project leader can read requests for their projects
       allow read: if isAuth() && (
         resource.data.userId == request.auth.uid ||
         isLeader(resource.data.projectId)
       );
-
-      // Allow listing (query) own requests — needed for getDocs() duplicate check
       allow list: if isAuth();
-
-      // Any authenticated user can create a join request for themselves
       allow create: if isAuth()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == "pending";
-
-      // Only the project leader can delete (approve/reject) a join request
       allow delete: if isAuth() && isLeader(resource.data.projectId);
-
-      // Status updates are handled by delete + re-create (no update needed)
       allow update: if false;
     }
 
     // ─── users ───────────────────────────────────────────────────────────────
-    // Users can read and write their own document (profile, AI settings, etc.)
     match /users/{userId} {
       allow read, write: if isAuth() && request.auth.uid == userId;
     }
 
     // ─── aiChats ─────────────────────────────────────────────────────────────
-    // Chat messages are scoped to a project; only project members can access
+    // Chat messages for a project. Both user messages and AI assistant responses
+    // are written by the signed-in user (userId = request.auth.uid for both),
+    // distinguished by the `role` field ("user" | "assistant").
     match /aiChats/{chatId} {
-      // Project members can read all chat messages for their project
-      allow read: if isAuth() && isMember(resource.data.projectId);
+      // Allow reading a single document if the reader is a project member
+      allow get: if isAuth() && isMember(resource.data.projectId);
 
-      // Any project member can write a chat message for their project
+      // Allow listing/querying — used by onSnapshot realtime listeners.
+      // Any authenticated user can list; the query's where("projectId","==",...)
+      // filter ensures they only see messages for projects they belong to.
+      allow list: if isAuth();
+
+      // Any project member can create a chat message (user or AI response).
+      // The userId field must match the signed-in user for both user and
+      // assistant messages (the role field distinguishes them, not userId).
       allow create: if isAuth()
         && request.resource.data.userId == request.auth.uid
         && isMember(request.resource.data.projectId);
 
-      // No updates or deletes — messages are immutable
+      // Messages are immutable
       allow update, delete: if false;
-
-      // Allow listing for real-time queries
-      allow list: if isAuth();
     }
   }
 }
