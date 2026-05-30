@@ -71,11 +71,11 @@ export function TaskFilters({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         {/* Phase Filter */}
         <Select
-          value={filters.phase?.toString() || ""}
+          value={filters.phase?.toString() || "all"}
           onValueChange={(value) =>
             onFiltersChange({
               ...filters,
-              phase: value ? parseInt(value) : null,
+              phase: value === "all" ? null : parseInt(value),
             })
           }
         >
@@ -83,7 +83,7 @@ export function TaskFilters({
             <SelectValue placeholder="Phase" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Phases</SelectItem>
+            <SelectItem value="all">All Phases</SelectItem>
             {phases.map((phase) => (
               <SelectItem key={phase.number} value={phase.number.toString()}>
                 Phase {phase.number}
@@ -94,11 +94,11 @@ export function TaskFilters({
 
         {/* Priority Filter */}
         <Select
-          value={filters.priority || ""}
+          value={filters.priority || "all"}
           onValueChange={(value) =>
             onFiltersChange({
               ...filters,
-              priority: (value as Task["priority"]) || null,
+              priority: value === "all" ? null : (value as Task["priority"]),
             })
           }
         >
@@ -106,7 +106,7 @@ export function TaskFilters({
             <SelectValue placeholder="Priority" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Priorities</SelectItem>
+            <SelectItem value="all">All Priorities</SelectItem>
             <SelectItem value="high">High</SelectItem>
             <SelectItem value="medium">Medium</SelectItem>
             <SelectItem value="low">Low</SelectItem>
@@ -115,11 +115,11 @@ export function TaskFilters({
 
         {/* Status Filter */}
         <Select
-          value={filters.status || ""}
+          value={filters.status || "all"}
           onValueChange={(value) =>
             onFiltersChange({
               ...filters,
-              status: (value as Task["status"]) || null,
+              status: value === "all" ? null : (value as Task["status"]),
             })
           }
         >
@@ -127,7 +127,7 @@ export function TaskFilters({
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Statuses</SelectItem>
+            <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="backlog">Backlog</SelectItem>
             <SelectItem value="todo">Todo</SelectItem>
             <SelectItem value="in-progress">In Progress</SelectItem>
@@ -139,11 +139,11 @@ export function TaskFilters({
 
         {/* Assignee Filter */}
         <Select
-          value={filters.assignee || ""}
+          value={filters.assignee || "all"}
           onValueChange={(value) =>
             onFiltersChange({
               ...filters,
-              assignee: value || null,
+              assignee: value === "all" ? null : value,
             })
           }
         >
@@ -151,7 +151,7 @@ export function TaskFilters({
             <SelectValue placeholder="Assignee" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Members</SelectItem>
+            <SelectItem value="all">All Members</SelectItem>
             {assignees.map((assignee) => (
               <SelectItem key={assignee.id} value={assignee.id}>
                 {assignee.name}
