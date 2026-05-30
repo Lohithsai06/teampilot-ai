@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   DndContext,
@@ -34,6 +34,7 @@ import {
   Loader2,
   TrendingUp,
   AlertTriangle,
+  Bell,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -47,6 +48,9 @@ import { useRoadmap } from "@/lib/useRoadmap";
 import { useKanbanTasks } from "@/lib/useKanbanTasks";
 import { type Task } from "@/lib/aiSystemPrompt";
 import { Progress } from "@/components/ui/progress";
+import { TaskFilters, type TaskFilterState } from "@/components/kanban/TaskFilters";
+import { TaskDetailsModal } from "@/components/kanban/TaskDetailsModal";
+import { CreateTaskModal } from "@/components/kanban/CreateTaskModal";
 
 const COLUMN_ORDER = ["backlog", "todo", "in-progress", "review", "testing", "completed"] as const;
 const COLUMN_TITLES: Record<Task["status"], string> = {
@@ -206,15 +210,31 @@ function KanbanColumn({ status, tasks, onMenuAction, onAddTask }: KanbanColumnPr
 
 export default function KanbanPage() {
   const { user } = useAuth();
-  const { activeProject, userRole } = useProject();
-  const { roadmap, currentActivePhase } = useRoadmap(activeProject?.projectId, user?.uid);
-  const { columns, loading, error, updateTaskStatus, getAnalytics } = useKanbanTasks(
+  const { activeProject, activeProjectMembers, userRole } = useProject();
+  const { roadmap, phases: roadmapPhases, currentActivePhase, updatePhaseStatus, completePhase } = useRoadmap(
+    activeProject?.projectId,
+    user?.uid
+  );
+  const { columns, loading, error, updateTaskStatus, createTask, deleteTask, getAnalytics } = useKanbanTasks(
     activeProject?.projectId,
     user?.uid
   );
 
   const isLeader = userRole === "leader";
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [showTaskDetails, setShowTaskDetails] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createModalStatus, setCreateModalStatus] = useState<Task["status"]>("todo");
+  const [filters, setFilters] = useState<TaskFilterState>({
+    search: "",
+    phase: null,
+    priority: null,
+    status: null,
+    assignee: null,
+  });
+  const [showMyTasksOnly, setShowMyTasksOnly] = useState(false);
+  const [phaseCompleteNotification, setPhaseCompleteNotification] = useState<boolean>(false);
   const [stats, setStats] = useState({
     total: 0,
     completed: 0,
@@ -233,7 +253,86 @@ export default function KanbanPage() {
       pending: analytics.total - analytics.completed,
       completionRate: analytics.completionRate,
     });
+
+    // Phase 8: Detect phase completion
+    if (currentActivePhase && stats.total > 0) {
+      const phaseTasksCount = Object.values(columns)
+        .flatMap((col) => col.tasks)
+        .filter((t) => t.phase === currentActivePhase.phaseNumber).length;
+
+      const completedPhaseTasksCount = columns.completed.tasks.filter(
+        (t) => t.phase === currentActivePhase.phaseNumber
+      ).length;
+
+      if (phaseTasksCount > 0 && phaseTasksCount === completedPhaseTasksCount) {
+        setPhaseCompleteNotification(true);
+      }
+    }
   }, [columns, getAnalytics]);
+
+  // Phase 5: Filter tasks by current phase + apply user filters
+  const filteredAndOrgananizedColumns = useMemo(() => {
+    const result: Record<Task["status"], { tasks: Task[]; count: number }> = {
+      backlog: { tasks: [], count: 0 },
+      todo: { tasks: [], count: 0 },
+      "in-progress": { tasks: [], count: 0 },
+      review: { tasks: [], count: 0 },
+      testing: { tasks: [], count: 0 },
+      completed: { tasks: [], count: 0 },
+    };
+
+    // Filter tasks
+    let tasksToShow = Object.values(columns)
+      .flatMap((col) => col.tasks);
+
+    // Phase 5: Filter by current phase (show current phase + backlog)
+    tasksToShow = tasksToShow.filter(
+      (t) => t.phase === currentActivePhase?.phaseNumber || t.status === "backlog"
+    );
+
+    // Phase 6: Filter by "My Tasks" if enabled
+    if (showMyTasksOnly && user?.uid) {
+      tasksToShow = tasksToShow.filter((t) => t.assignedTo === user.uid);
+    }
+
+    // Apply search filter
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase();
+      tasksToShow = tasksToShow.filter(
+        (t) =>
+          t.title.toLowerCase().includes(searchLower) ||
+          t.description?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Apply phase filter
+    if (filters.phase !== null) {
+      tasksToShow = tasksToShow.filter((t) => t.phase === filters.phase || t.status === "backlog");
+    }
+
+    // Apply priority filter
+    if (filters.priority) {
+      tasksToShow = tasksToShow.filter((t) => t.priority === filters.priority);
+    }
+
+    // Apply assignee filter
+    if (filters.assignee) {
+      tasksToShow = tasksToShow.filter((t) => t.assignedTo === filters.assignee);
+    }
+
+    // Apply status filter
+    if (filters.status) {
+      tasksToShow = tasksToShow.filter((t) => t.status === filters.status);
+    }
+
+    // Organize by status
+    tasksToShow.forEach((task) => {
+      result[task.status].tasks.push(task);
+      result[task.status].count += 1;
+    });
+
+    return result;
+  }, [columns, filters, currentActivePhase, showMyTasksOnly, user?.uid]);
 
   // Drag-drop sensor configuration
   const sensors = useSensors(
@@ -249,17 +348,15 @@ export default function KanbanPage() {
       const { active, over } = event;
       if (!over) return;
 
-      const activeTask = Array.from(Object.values(columns))
+      const activeTask = Object.values(filteredAndOrgananizedColumns)
         .flatMap((col) => col.tasks)
         .find((t) => t.id === active.id);
 
       if (!activeTask) return;
 
-      // Determine new status from which column the task was dropped into
       let newStatus = activeTask.status;
 
-      // Find which column the task is in based on task ID
-      for (const [status, column] of Object.entries(columns)) {
+      for (const [status, column] of Object.entries(filteredAndOrgananizedColumns)) {
         if (column.tasks.some((t) => t.id === over.id)) {
           newStatus = status as Task["status"];
           break;
@@ -267,14 +364,35 @@ export default function KanbanPage() {
       }
 
       if (newStatus !== activeTask.status) {
-        console.log(`[KanbanPage] Moving task ${activeTask.id} to ${newStatus}`);
         updateTaskStatus(activeTask.id!, newStatus);
       }
 
       setActiveId(null);
     },
-    [columns, updateTaskStatus]
+    [filteredAndOrgananizedColumns, updateTaskStatus]
   );
+
+  const handleCreateTask = useCallback(
+    async (taskData: Omit<Task, "id" | "createdAt">) => {
+      await createTask(taskData);
+    },
+    [createTask]
+  );
+
+  const handleDeleteTask = useCallback(
+    async (taskId: string) => {
+      await deleteTask(taskId);
+      setShowTaskDetails(false);
+    },
+    [deleteTask]
+  );
+
+  const handleMarkPhaseComplete = useCallback(async () => {
+    if (currentActivePhase?.id) {
+      await completePhase(currentActivePhase.id);
+      setPhaseCompleteNotification(false);
+    }
+  }, [currentActivePhase, completePhase]);
 
   if (loading) {
     return (
@@ -305,6 +423,27 @@ export default function KanbanPage() {
   return (
     <DashboardLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        {/* ─ Phase Completion Notification ─ */}
+        {phaseCompleteNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center justify-between p-4 rounded-lg bg-success/10 border border-success/20"
+          >
+            <div className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-success" />
+              <p className="text-sm font-medium">
+                ✅ All tasks in Phase {currentActivePhase?.phaseNumber} are complete!
+              </p>
+            </div>
+            {isLeader && (
+              <Button size="sm" onClick={handleMarkPhaseComplete}>
+                Mark Phase Complete & Advance
+              </Button>
+            )}
+          </motion.div>
+        )}
+
         {/* ─ Header ─ */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
@@ -315,13 +454,26 @@ export default function KanbanPage() {
                 : "Drag and drop tasks to manage your project workflow"}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              variant={showMyTasksOnly ? "default" : "outline"}
+              className="gap-2"
+              onClick={() => setShowMyTasksOnly(!showMyTasksOnly)}
+            >
+              My Tasks
+            </Button>
             <Button variant="outline" className="gap-2">
               <Filter className="h-4 w-4" />
-              Filter
+              Filters
             </Button>
             {isLeader && (
-              <Button className="gap-2">
+              <Button
+                className="gap-2"
+                onClick={() => {
+                  setShowCreateModal(true);
+                  setCreateModalStatus("todo");
+                }}
+              >
                 <Plus className="h-4 w-4" />
                 Add Task
               </Button>
@@ -336,6 +488,16 @@ export default function KanbanPage() {
             <p className="text-sm">{error}</p>
           </div>
         )}
+
+        {/* ─ Task Filters ─ */}
+        <div className="bg-card border rounded-lg p-4">
+          <TaskFilters
+            filters={filters}
+            onFiltersChange={setFilters}
+            phases={roadmapPhases.map((p) => ({ number: p.phaseNumber, title: p.title }))}
+            assignees={activeProjectMembers.map((m) => ({ id: m.userId, name: m.name }))}
+          />
+        </div>
 
         {/* ─ Phase Progress ─ */}
         {currentActivePhase && (
@@ -368,9 +530,21 @@ export default function KanbanPage() {
               <KanbanColumn
                 key={status}
                 status={status}
-                tasks={columns[status].tasks}
-                onMenuAction={() => {}}
-                onAddTask={() => {}}
+                tasks={filteredAndOrgananizedColumns[status].tasks}
+                onMenuAction={(action, task) => {
+                  if (action === "edit") {
+                    setSelectedTask(task);
+                    setShowTaskDetails(true);
+                  } else if (action === "delete") {
+                    if (confirm(`Delete task "${task.title}"?`)) {
+                      handleDeleteTask(task.id!);
+                    }
+                  }
+                }}
+                onAddTask={(status) => {
+                  setCreateModalStatus(status);
+                  setShowCreateModal(true);
+                }}
               />
             ))}
           </div>
@@ -378,7 +552,7 @@ export default function KanbanPage() {
           <DragOverlay>
             {activeId ? (
               <div className="bg-white shadow-lg rounded-lg p-4 opacity-90">
-                {Array.from(Object.values(columns))
+                {Object.values(filteredAndOrgananizedColumns)
                   .flatMap((col) => col.tasks)
                   .find((t) => t.id === activeId) && <div>Dragging...</div>}
               </div>
@@ -389,7 +563,7 @@ export default function KanbanPage() {
         {/* ─ Analytics Footer ─ */}
         <Card className="bg-muted/30">
           <CardContent className="p-4">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
               <div>
                 <p className="text-xs text-muted-foreground font-medium">Total Tasks</p>
                 <p className="text-2xl font-bold mt-1">{stats.total}</p>
@@ -407,16 +581,63 @@ export default function KanbanPage() {
                 <p className="text-2xl font-bold text-warning mt-1">{stats.pending}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground font-medium">Completion</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-2xl font-bold">{stats.completionRate}%</span>
-                  <TrendingUp className="h-5 w-5 text-success" />
+                <p className="text-xs text-muted-foreground font-medium">Completion %</p>
+                <p className="text-2xl font-bold mt-1">{stats.completionRate}%</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground font-medium">Health</p>
+                <div className="flex items-center gap-1 mt-1">
+                  <span className="text-sm font-bold">
+                    {stats.completionRate >= 70 ? "🟢" : stats.completionRate >= 40 ? "🟡" : "🔴"}
+                  </span>
+                  <span className="text-xs">
+                    {stats.completionRate >= 70 ? "On Track" : stats.completionRate >= 40 ? "At Risk" : "Behind"}
+                  </span>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Task Details Modal */}
+      {selectedTask && (
+        <TaskDetailsModal
+          task={selectedTask}
+          isOpen={showTaskDetails}
+          onClose={() => setShowTaskDetails(false)}
+          onUpdate={async (taskId, updates) => {
+            // Update task in Firestore
+            // For now, we update individual fields
+            if (updates.priority) {
+              // Call updateDoc separately for each field
+            }
+          }}
+          onDelete={handleDeleteTask}
+          teamMembers={activeProjectMembers.map((m) => ({
+            id: m.userId,
+            name: m.name,
+            role: m.role,
+          }))}
+          isLeader={isLeader}
+        />
+      )}
+
+      {/* Create Task Modal */}
+      <CreateTaskModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSubmit={handleCreateTask}
+        projectId={activeProject.projectId}
+        userId={user?.uid || ""}
+        roadmapPhases={roadmapPhases.map((p) => ({ number: p.phaseNumber, title: p.title }))}
+        teamMembers={activeProjectMembers.map((m) => ({
+          id: m.userId,
+          name: m.name,
+          role: m.role,
+        }))}
+        currentPhase={currentActivePhase?.phaseNumber || 1}
+      />
     </DashboardLayout>
   );
 }

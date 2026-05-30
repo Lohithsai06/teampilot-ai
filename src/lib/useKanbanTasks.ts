@@ -181,6 +181,30 @@ export function useKanbanTasks(
     []
   );
 
+  // ── 2b. Update task (for editing from details modal) ───────────────────
+
+  const updateTask = useCallback(
+    async (taskId: string, updates: Partial<Task>) => {
+      try {
+        console.log(`[useKanbanTasks] ── Updating task ──`);
+        console.log(`[useKanbanTasks]   taskId: ${taskId}`);
+        console.log(`[useKanbanTasks]   updates:`, Object.keys(updates).join(", "));
+
+        await updateDoc(doc(db, "tasks", taskId), {
+          ...updates,
+          updatedAt: serverTimestamp(),
+        });
+
+        console.log(`[useKanbanTasks] ✅ Task updated`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        console.error(`[useKanbanTasks] ❌ Failed to update task:`, message);
+        setError(`Failed to update task: ${message}`);
+      }
+    },
+    []
+  );
+
   // ── 3. Update task assignee ────────────────────────────────────────────
 
   const updateTaskAssignee = useCallback(
@@ -303,6 +327,7 @@ export function useKanbanTasks(
     loading,
     error,
     updateTaskStatus,
+    updateTask,
     updateTaskAssignee,
     createTask,
     deleteTask,
