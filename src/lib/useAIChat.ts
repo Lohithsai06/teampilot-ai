@@ -60,6 +60,7 @@ export function useAIChat(
     console.log(`[useAIChat]   collection: aiChats`);
     console.log(`[useAIChat]   filter    : projectId == "${projectId}"`);
     console.log(`[useAIChat]   orderBy   : timestamp asc`);
+    console.log(`[useAIChat]   queryPattern: collection("aiChats") -> where("projectId","==",projectId) -> orderBy("timestamp","asc")`);
 
     const q = query(
       collection(db, "aiChats"),
@@ -67,56 +68,100 @@ export function useAIChat(
       orderBy("timestamp", "asc")
     );
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        console.log(`[useAIChat] ── Snapshot received ──`);
-        console.log(`[useAIChat]   docs count    : ${snap.docs.length}`);
-        console.log(`[useAIChat]   fromCache     : ${snap.metadata.fromCache}`);
-        console.log(`[useAIChat]   pendingWrites : ${snap.metadata.hasPendingWrites}`);
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
 
-        const msgs: ChatMessage[] = snap.docs.map((d) => {
-          const data = d.data() as Omit<ChatMessage, "id">;
-          console.log(
-            `[useAIChat]   doc[${d.id.slice(0, 8)}] role=${data.role} | userId=${data.userId} | provider=${data.provider ?? ""} | ts=${data.timestamp ? "yes" : "null"} | len=${data.content?.length ?? 0}`
-          );
-          return { id: d.id, ...data };
-        });
+    const setupListener = () => {
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          console.log(`[useAIChat] ── Snapshot received ──`);
+          console.log(`[useAIChat]   docs count    : ${snap.docs.length}`);
+          console.log(`[useAIChat]   fromCache     : ${snap.metadata.fromCache}`);
+          console.log(`[useAIChat]   pendingWrites : ${snap.metadata.hasPendingWrites}`);
 
-        if (msgs.length > 0) {
-          console.log(`[useAIChat]   first: role=${msgs[0].role}, content="${msgs[0].content.slice(0, 60)}..."`);
-          console.log(`[useAIChat]   last : role=${msgs[msgs.length - 1].role}, content="${msgs[msgs.length - 1].content.slice(0, 60)}..."`);
-        }
+          const msgs: ChatMessage[] = snap.docs.map((d) => {
+            const data = d.data() as Omit<ChatMessage, "id">;
+            console.log(
+              `[useAIChat]   doc[${d.id.slice(0, 8)}] role=${data.role} | userId=${data.userId} | provider=${data.provider ?? ""} | ts=${data.timestamp ? "yes" : "null"} | len=${data.content?.length ?? 0}`
+            );
+            return { id: d.id, ...data };
+          });
 
-        setFirestoreMessages(msgs);
-
-        // Drop optimistic messages that are now confirmed in Firestore
-        setOptimisticMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const firestoreContents = new Set(msgs.map((m) => m.content));
-          const remaining = prev.filter((om) => !firestoreContents.has(om.content));
-          if (remaining.length !== prev.length) {
-            console.log(`[useAIChat] Cleared ${prev.length - remaining.length} optimistic message(s)`);
+          if (msgs.length > 0) {
+            console.log(`[useAIChat]   first: role=${msgs[0].role}, content="${msgs[0].content.slice(0, 60)}..."`);
+            console.log(`[useAIChat]   last : role=${msgs[msgs.length - 1].role}, content="${msgs[msgs.length - 1].content.slice(0, 60)}..."`);
           }
-          return remaining;
-        });
 
-        setLoading(false);
-        setInitialLoadDone(true);
-      },
-      (error) => {
-        console.error(`[useAIChat] ── Listener ERROR ──`);
-        console.error(`[useAIChat]   code   : ${error.code}`);
-        console.error(`[useAIChat]   message: ${error.message}`);
-        // Still mark as done so the UI doesn't stay on loading forever
-        setLoading(false);
-        setInitialLoadDone(true);
-      }
-    );
+          // Reset retry count on successful snapshot
+          retryCount = 0;
+
+          setFirestoreMessages(msgs);
+
+          // Drop optimistic messages that are now confirmed in Firestore
+          setOptimisticMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const firestoreContents = new Set(msgs.map((m) => m.content));
+            const remaining = prev.filter((om) => !firestoreContents.has(om.content));
+            if (remaining.length !== prev.length) {
+              console.log(`[useAIChat] Cleared ${prev.length - remaining.length} optimistic message(s)`);
+            }
+            return remaining;
+          });
+
+          setLoading(false);
+          setInitialLoadDone(true);
+        },
+        (error) => {
+          console.error(`[useAIChat] ── Listener ERROR ──`);
+          console.error(`[useAIChat]   code   : ${error.code}`);
+          console.error(`[useAIChat]   message: ${error.message}`);
+          console.error(`[useAIChat]   query  : projectId="${projectId}", orderBy=timestamp`);
+
+          // Handle failed-precondition: index not ready yet
+          if (error.code === "failed-precondition") {
+            console.warn(`[useAIChat] ⚠️  Composite index not yet available (error: ${error.message})`);
+            console.warn(`[useAIChat]    Required index: collection=aiChats, fields=[projectId ASC, timestamp ASC]`);
+            console.warn(`[useAIChat]    Please deploy firestore.indexes.json or check Firestore console`);
+
+            // Retry with exponential backoff
+            if (retryCount < MAX_RETRIES) {
+              const delayMs = Math.pow(2, retryCount) * 2000;
+              retryCount++;
+              console.log(`[useAIChat] Retrying in ${delayMs}ms (attempt ${retryCount}/${MAX_RETRIES})`);
+
+              const timeout = setTimeout(() => {
+                console.log(`[useAIChat] Retrying listener setup...`);
+                setupListener();
+              }, delayMs);
+
+              // Store timeout for cleanup
+              (setupListener as any).__timeout = timeout;
+            } else {
+              console.error(`[useAIChat] ❌ Max retries (${MAX_RETRIES}) exceeded. Index creation may be delayed.`);
+              setLoading(false);
+              setInitialLoadDone(true);
+            }
+          } else {
+            // Other errors: mark as done to prevent infinite loading
+            console.error(`[useAIChat] ❌ Unrecoverable listener error:`, error);
+            setLoading(false);
+            setInitialLoadDone(true);
+          }
+        }
+      );
+
+      return unsub;
+    };
+
+    const unsub = setupListener();
 
     return () => {
       console.log(`[useAIChat] Detaching listener for project: ${projectId}`);
-      unsub();
+      if ((setupListener as any).__timeout) {
+        clearTimeout((setupListener as any).__timeout);
+      }
+      unsub?.();
     };
   }, [projectId, userId]);
 

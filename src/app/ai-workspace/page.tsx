@@ -40,6 +40,10 @@ import { useAuth } from "@/context/AuthContext";
 import { useProject } from "@/context/ProjectContext";
 import { useAISettings } from "@/lib/useAISettings";
 import { useAIChat } from "@/lib/useAIChat";
+import { useAgentMode } from "@/lib/useAgentMode";
+import { usePMTasks } from "@/lib/usePMTasks";
+import { useVibePrompts } from "@/lib/useVibePrompts";
+import { useGitHub } from "@/lib/useGitHub";
 import {
   buildSystemPrompt,
   type AgentMode,
@@ -336,6 +340,22 @@ export default function AIWorkspacePage() {
   const [activeMode, setActiveMode] = useState<AgentMode>("architect");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Persist and restore agent mode
+  useAgentMode(activeProject?.projectId, user?.uid, activeMode);
+
+  // PM task management
+  const { createMultipleTasks } = usePMTasks(activeProject?.projectId);
+
+  // Vibe Coding prompt management
+  const { savePrompt, getPrompts, getPromptsByTool } = useVibePrompts(
+    activeProject?.projectId
+  );
+
+  // GitHub repository and report management
+  const { connectRepository, getRepository, saveReport } = useGitHub(
+    activeProject?.projectId
+  );
 
   // Determine if fallback is active
   const isFallbackActive = (() => {
