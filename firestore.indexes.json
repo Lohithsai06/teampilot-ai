@@ -13,6 +13,48 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "roadmaps",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "projectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "generatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "roadmapPhases",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "roadmapId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "phaseNumber",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "roadmapPhases",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "projectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "phaseNumber",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

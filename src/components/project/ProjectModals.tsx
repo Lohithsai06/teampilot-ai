@@ -17,6 +17,8 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
+  addDoc,
   serverTimestamp,
   query,
   where,
@@ -25,6 +27,112 @@ import {
 import { db } from "@/lib/firebase";
 import { LoadingSpinner } from "@/components/common/LoadingSpinner";
 import { Rocket, GitBranch, CheckCircle2 } from "lucide-react";
+
+// ─── Auto Roadmap Generation (fire-and-forget after project creation) ─────────
+
+async function autoGenerateRoadmap(
+  projectId: string,
+  userId: string,
+  projectName: string,
+  projectDescription: string,
+  leaderName: string,
+  projectCode: string
+) {
+  try {
+    console.log(`[AutoRoadmap] ── Starting auto-generation ──`);
+    console.log(`[AutoRoadmap]   projectId: ${projectId}`);
+    console.log(`[AutoRoadmap]   project  : ${projectName}`);
+
+    // Step 1: Read user's AI settings from Firestore
+    const userDoc = await getDoc(doc(db, "users", userId));
+    if (!userDoc.exists()) {
+      console.warn("[AutoRoadmap] User doc not found, skipping auto-generation");
+      return;
+    }
+
+    const userData = userDoc.data();
+    const geminiApiKey = userData.geminiApiKey || "";
+    const openRouterApiKey = userData.openRouterApiKey || "";
+    const preferredProvider = userData.preferredProvider || "gemini";
+    const fallbackProvider = userData.fallbackProvider || "openrouter";
+
+    if (!geminiApiKey && !openRouterApiKey) {
+      console.warn("[AutoRoadmap] No AI API keys configured, skipping auto-generation");
+      console.warn("[AutoRoadmap] User can generate manually from the Roadmap page");
+      return;
+    }
+
+    // Step 2: Call the AI roadmap generation API
+    const res = await fetch("/api/generate-roadmap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        geminiApiKey,
+        openRouterApiKey,
+        preferredProvider,
+        fallbackProvider,
+        projectContext: {
+          projectName,
+          projectDescription,
+          teamMembers: [{ name: leaderName, role: "leader" }],
+          leaderName,
+          projectCode,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      console.error("[AutoRoadmap] API error:", errData.error || res.status);
+      return;
+    }
+
+    const data = await res.json();
+    const { projectSummary, phases } = data;
+
+    if (!phases || !Array.isArray(phases) || phases.length === 0) {
+      console.error("[AutoRoadmap] AI returned empty/invalid roadmap");
+      return;
+    }
+
+    // Step 3: Write roadmap document to Firestore
+    const roadmapRef = await addDoc(collection(db, "roadmaps"), {
+      projectId,
+      generatedBy: userId,
+      generatedAt: serverTimestamp(),
+      projectSummary: projectSummary || "",
+      status: "active",
+      currentPhase: 1,
+      totalPhases: phases.length,
+    });
+
+    console.log(`[AutoRoadmap]   Created roadmap doc: ${roadmapRef.id}`);
+
+    // Step 4: Write phase documents
+    for (let i = 0; i < phases.length; i++) {
+      const phase = phases[i];
+      await addDoc(collection(db, "roadmapPhases"), {
+        roadmapId: roadmapRef.id,
+        projectId,
+        phaseNumber: phase.phaseNumber || i + 1,
+        title: phase.title || `Phase ${i + 1}`,
+        description: phase.description || "",
+        objectives: Array.isArray(phase.objectives) ? phase.objectives : [],
+        deliverables: Array.isArray(phase.deliverables) ? phase.deliverables : [],
+        estimatedDuration: phase.estimatedDuration || "TBD",
+        status: i === 0 ? "in_progress" : "not_started",
+        dependencies: Array.isArray(phase.dependencies) ? phase.dependencies : [],
+        risks: Array.isArray(phase.risks) ? phase.risks : [],
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    console.log(`[AutoRoadmap] ✅ Auto-generated roadmap with ${phases.length} phases`);
+  } catch (err) {
+    // Fire-and-forget: log but don't throw
+    console.error("[AutoRoadmap] ❌ Auto-generation failed:", err);
+  }
+}
 
 // ─── Create Project Modal ─────────────────────────────────────────────────────
 
@@ -59,6 +167,7 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
     try {
       const projectId = crypto.randomUUID();
       const projectCode = generateProjectCode();
+      const leaderName = user.displayName || "Anonymous";
 
       // 1. Create project document
       const projectRef = doc(db, "projects", projectId);
@@ -68,7 +177,7 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
         projectDescription: formData.projectDescription,
         projectCode,
         leaderId: user.uid,
-        leaderName: user.displayName || "Anonymous",
+        leaderName,
         githubRepo: formData.githubRepo,
         status: "active",
         currentPhase: 1,
@@ -84,11 +193,22 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
       await setDoc(doc(db, "projectMembers", `${projectId}_${user.uid}`), {
         projectId,
         userId: user.uid,
-        name: user.displayName || "Anonymous",
+        name: leaderName,
         email: user.email,
         role: "leader",
         joinedAt: serverTimestamp(),
       });
+
+      // 3. Auto-generate roadmap in the background (fire-and-forget)
+      //    This runs asynchronously — modal closes immediately
+      autoGenerateRoadmap(
+        projectId,
+        user.uid,
+        formData.projectName,
+        formData.projectDescription,
+        leaderName,
+        projectCode
+      );
 
       onOpenChange(false);
       setFormData({ projectName: "", projectDescription: "", githubRepo: "" });

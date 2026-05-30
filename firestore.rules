@@ -66,6 +66,33 @@ service cloud.firestore {
       allow read, write: if isAuth() && request.auth.uid == userId;
     }
 
+    // ─── roadmaps ──────────────────────────────────────────────────────────
+    // AI-generated project roadmaps. One active roadmap per project.
+    match /roadmaps/{roadmapId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.generatedBy == request.auth.uid
+        && isMember(request.resource.data.projectId);
+      allow update: if isAuth()
+        && isMember(resource.data.projectId);
+      allow delete: if isAuth()
+        && isLeader(resource.data.projectId);
+    }
+
+    // ─── roadmapPhases ────────────────────────────────────────────────────
+    // Individual phases within a roadmap.
+    match /roadmapPhases/{phaseId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth()
+        && isMember(request.resource.data.projectId);
+      allow update: if isAuth()
+        && isMember(resource.data.projectId);
+      allow delete: if isAuth()
+        && isLeader(resource.data.projectId);
+    }
+
     // ─── aiChats ─────────────────────────────────────────────────────────────
     // Chat messages for a project. Both user messages and AI assistant responses
     // are written by the signed-in user (userId = request.auth.uid for both),
