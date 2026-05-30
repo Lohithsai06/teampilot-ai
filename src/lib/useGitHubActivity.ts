@@ -16,10 +16,26 @@ export interface GitHubActivity {
   branch: string;
   commitMessage: string;
   commitHash: string;
+  commitUrl?: string;
+  repository?: string;
   linesAdded: number;
   linesRemoved: number;
   filesChanged: number;
   committedAt: Timestamp | null;
+}
+
+/** Safely extract milliseconds from a Firestore Timestamp, Date, or raw object */
+function toMillis(value: unknown): number {
+  if (!value) return 0;
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "object" && typeof (value as any).toMillis === "function") {
+    return (value as any).toMillis();
+  }
+  if (typeof value === "object" && typeof (value as any).seconds === "number") {
+    return (value as any).seconds * 1000;
+  }
+  return 0;
 }
 
 export function useGitHubActivity(projectId: string | undefined) {
@@ -52,22 +68,24 @@ export function useGitHubActivity(projectId: string | undefined) {
               return {
                 id: doc.id,
                 projectId: data.projectId,
-                authorName: data.authorName,
-                authorId: data.authorId,
-                branch: data.branch,
-                commitMessage: data.commitMessage,
-                commitHash: data.commitHash,
-                linesAdded: data.linesAdded,
-                linesRemoved: data.linesRemoved,
-                filesChanged: data.filesChanged,
-                committedAt: data.committedAt,
+                authorName: data.authorName || "Unknown",
+                authorId: data.authorId || "unknown",
+                branch: data.branch || "main",
+                commitMessage: data.commitMessage || "",
+                commitHash: data.commitHash || "",
+                commitUrl: data.commitUrl,
+                repository: data.repository,
+                linesAdded: data.linesAdded ?? 0,
+                linesRemoved: data.linesRemoved ?? 0,
+                filesChanged: data.filesChanged ?? 0,
+                committedAt: data.committedAt instanceof Timestamp
+                  ? data.committedAt
+                  : data.committedAt?.seconds
+                    ? new Timestamp(data.committedAt.seconds, data.committedAt.nanoseconds ?? 0)
+                    : null,
               } as GitHubActivity;
             })
-            .sort((a, b) => {
-              const at = a.committedAt?.toMillis?.() ?? 0;
-              const bt = b.committedAt?.toMillis?.() ?? 0;
-              return bt - at; // Newest first
-            });
+            .sort((a, b) => toMillis(b.committedAt) - toMillis(a.committedAt)); // Newest first
 
           setActivities(items);
           setLoading(false);

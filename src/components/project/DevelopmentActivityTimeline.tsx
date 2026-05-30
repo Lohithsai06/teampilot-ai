@@ -12,6 +12,7 @@ import {
   FileText,
   Clock,
   Loader2,
+  ExternalLink,
 } from "lucide-react";
 import { GitHubActivity } from "@/lib/useGitHubActivity";
 import { Timestamp } from "firebase/firestore";
@@ -464,52 +465,59 @@ export function DevelopmentActivityTimeline({
                           {activity.commitMessage}
                         </p>
 
-                        {/* Stats */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-                          <div className="bg-emerald-500/10 rounded p-2">
-                            <p className="text-xs text-muted-foreground">
-                              Lines Added
-                            </p>
-                            <p className="text-sm font-bold text-emerald-400 flex items-center gap-1">
-                              <Plus className="h-3 w-3" />
-                              {activity.linesAdded}
-                            </p>
+                        {/* Stats — only shown when non-zero (GitHub list API may return 0) */}
+                        {(activity.linesAdded > 0 || activity.linesRemoved > 0 || activity.filesChanged > 0) && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                            <div className="bg-emerald-500/10 rounded p-2">
+                              <p className="text-xs text-muted-foreground">
+                                Lines Added
+                              </p>
+                              <p className="text-sm font-bold text-emerald-400 flex items-center gap-1">
+                                <Plus className="h-3 w-3" />
+                                {activity.linesAdded}
+                              </p>
+                            </div>
+                            <div className="bg-red-500/10 rounded p-2">
+                              <p className="text-xs text-muted-foreground">
+                                Lines Removed
+                              </p>
+                              <p className="text-sm font-bold text-red-400 flex items-center gap-1">
+                                <Minus className="h-3 w-3" />
+                                {activity.linesRemoved}
+                              </p>
+                            </div>
+                            <div className="bg-cyan-500/10 rounded p-2">
+                              <p className="text-xs text-muted-foreground">
+                                Files Changed
+                              </p>
+                              <p className="text-sm font-bold text-cyan-400 flex items-center gap-1">
+                                <FileText className="h-3 w-3" />
+                                {activity.filesChanged}
+                              </p>
+                            </div>
                           </div>
-                          <div className="bg-red-500/10 rounded p-2">
-                            <p className="text-xs text-muted-foreground">
-                              Lines Removed
-                            </p>
-                            <p className="text-sm font-bold text-red-400 flex items-center gap-1">
-                              <Minus className="h-3 w-3" />
-                              {activity.linesRemoved}
-                            </p>
-                          </div>
-                          <div className="bg-cyan-500/10 rounded p-2">
-                            <p className="text-xs text-muted-foreground">
-                              Files Changed
-                            </p>
-                            <p className="text-sm font-bold text-cyan-400 flex items-center gap-1">
-                              <FileText className="h-3 w-3" />
-                              {activity.filesChanged}
-                            </p>
-                          </div>
-                          <div className="bg-muted/50 rounded p-2">
-                            <p className="text-xs text-muted-foreground">
-                              Committed
-                            </p>
-                            <p className="text-sm font-medium flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {formatTimestamp(activity.committedAt)}
-                            </p>
-                          </div>
-                        </div>
+                        )}
 
-                        {/* Full Hash */}
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-muted-foreground">Hash:</span>
-                          <code className="bg-background/60 px-2 py-1 rounded border border-border/50 font-mono text-muted-foreground">
-                            {activity.commitHash}
+                        {/* Bottom: hash + committed time + link */}
+                        <div className="flex flex-wrap items-center gap-3 text-xs">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Clock className="h-3 w-3" />
+                            {formatTimestamp(activity.committedAt)}
+                          </div>
+                          <code className="bg-background/60 px-2 py-0.5 rounded border border-border/50 font-mono text-muted-foreground">
+                            {activity.commitHash.slice(0, 7)}
                           </code>
+                          {activity.commitUrl && (
+                            <a
+                              href={activity.commitUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-primary hover:underline"
+                            >
+                              View on GitHub
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>

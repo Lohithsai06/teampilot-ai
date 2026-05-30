@@ -7,6 +7,7 @@ import {
   where,
   getDocs,
   serverTimestamp,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -122,16 +123,24 @@ export function useGitHubSync() {
               branch = branches[0]?.name || "main";
             }
 
+            // Convert ISO date string to Firestore Timestamp
+            const committedDate = new Date(commit.commit.author.date);
+            const committedAt = Timestamp.fromDate(committedDate);
+
             await addDoc(collection(db, "githubActivity"), {
               projectId,
               authorName: commit.commit.author.name,
               authorId: commit.author?.login || "unknown",
               branch,
-              commitMessage: commit.commit.message,
+              commitMessage: commit.commit.message.split("\n")[0], // First line only
               commitHash: commit.sha,
               commitUrl: commit.html_url,
               repository: `${owner}/${repo}`,
-              committedAt: new Date(commit.commit.author.date),
+              committedAt,         // Firestore Timestamp ✅
+              // GitHub commits list API doesn't return line stats — default to 0
+              linesAdded: 0,
+              linesRemoved: 0,
+              filesChanged: 0,
               repoUrl,
               repoInfo,
               createdAt: serverTimestamp(),
