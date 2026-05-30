@@ -12,7 +12,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Brain,
@@ -34,6 +33,8 @@ import {
   Bot,
   Zap,
   MessageSquare,
+  Hash,
+  TrendingUp,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useProject } from "@/context/ProjectContext";
@@ -70,7 +71,6 @@ function formatTime(ts: Timestamp | null): string {
 }
 
 // ─── Simple markdown renderer ─────────────────────────────────────────────────
-// Renders bold, headers, bullet points, inline code, and code blocks.
 
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
@@ -81,7 +81,6 @@ function renderMarkdown(text: string) {
 
   const processInline = (line: string): React.ReactNode[] => {
     const parts: React.ReactNode[] = [];
-    // Process bold, inline code
     const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
     let lastIndex = 0;
     let match;
@@ -119,18 +118,17 @@ function renderMarkdown(text: string) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Code block toggle
     if (line.startsWith("```")) {
       if (inCodeBlock) {
         elements.push(
-          <div key={`code-${i}`} className="my-2">
+          <div key={`code-${i}`} className="my-3">
             {codeBlockLang && (
               <div className="text-[10px] text-muted-foreground bg-muted/80 px-3 py-1 rounded-t border border-b-0 font-mono">
                 {codeBlockLang}
               </div>
             )}
             <pre
-              className={`bg-muted/60 border p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap ${
+              className={`bg-muted/60 border p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed ${
                 codeBlockLang ? "rounded-b" : "rounded"
               }`}
             >
@@ -153,62 +151,53 @@ function renderMarkdown(text: string) {
       continue;
     }
 
-    // Headers
     if (line.startsWith("### ")) {
       elements.push(
-        <h4 key={i} className="font-semibold text-sm mt-3 mb-1">
+        <h4 key={i} className="font-semibold text-sm mt-4 mb-1.5 text-foreground">
           {processInline(line.slice(4))}
         </h4>
       );
     } else if (line.startsWith("## ")) {
       elements.push(
-        <h3 key={i} className="font-bold text-sm mt-3 mb-1">
+        <h3 key={i} className="font-bold text-base mt-4 mb-1.5 text-foreground">
           {processInline(line.slice(3))}
         </h3>
       );
     } else if (line.startsWith("# ")) {
       elements.push(
-        <h2 key={i} className="font-bold text-base mt-3 mb-1">
+        <h2 key={i} className="font-bold text-lg mt-4 mb-2 text-foreground">
           {processInline(line.slice(2))}
         </h2>
       );
-    }
-    // Bullet points
-    else if (line.match(/^[\s]*[•\-\*]\s/)) {
+    } else if (line.match(/^[\s]*[•\-\*]\s/)) {
       const indent = line.match(/^(\s*)/)?.[1]?.length || 0;
       const content = line.replace(/^[\s]*[•\-\*]\s/, "");
       elements.push(
         <div
           key={i}
-          className="flex gap-2 items-start"
+          className="flex gap-2 items-start my-0.5"
           style={{ paddingLeft: `${Math.min(indent, 4) * 8}px` }}
         >
-          <span className="text-primary mt-1 text-xs shrink-0">•</span>
-          <span className="text-sm">{processInline(content)}</span>
+          <span className="text-primary mt-1.5 text-xs shrink-0">•</span>
+          <span className="text-sm leading-relaxed">{processInline(content)}</span>
         </div>
       );
-    }
-    // Numbered lists
-    else if (line.match(/^\d+\.\s/)) {
+    } else if (line.match(/^\d+\.\s/)) {
       const content = line.replace(/^\d+\.\s/, "");
       const num = line.match(/^(\d+)\./)?.[1];
       elements.push(
-        <div key={i} className="flex gap-2 items-start">
-          <span className="text-primary text-xs font-semibold shrink-0 w-4 text-right">
+        <div key={i} className="flex gap-2 items-start my-0.5">
+          <span className="text-primary text-xs font-semibold shrink-0 w-4 text-right mt-0.5">
             {num}.
           </span>
-          <span className="text-sm">{processInline(content)}</span>
+          <span className="text-sm leading-relaxed">{processInline(content)}</span>
         </div>
       );
-    }
-    // Empty lines
-    else if (line.trim() === "") {
-      elements.push(<div key={i} className="h-1.5" />);
-    }
-    // Regular text
-    else {
+    } else if (line.trim() === "") {
+      elements.push(<div key={i} className="h-2" />);
+    } else {
       elements.push(
-        <p key={i} className="text-sm">
+        <p key={i} className="text-sm leading-relaxed">
           {processInline(line)}
         </p>
       );
@@ -225,32 +214,77 @@ const MODES: {
   label: string;
   icon: React.ReactNode;
   description: string;
+  color: string;
 }[] = [
   {
     id: "architect",
     label: "Architect",
-    icon: <Brain className="h-3 w-3" />,
+    icon: <Brain className="h-3.5 w-3.5" />,
     description: "Architecture, Tech Stack, Database, Infrastructure",
+    color: "text-violet-500",
   },
   {
     id: "pm",
     label: "PM Mode",
-    icon: <Map className="h-3 w-3" />,
+    icon: <Map className="h-3.5 w-3.5" />,
     description: "Roadmap, Sprint Planning, Task Assignment, Kanban",
+    color: "text-blue-500",
   },
   {
     id: "vibe-coding",
     label: "Vibe Coding",
-    icon: <Code className="h-3 w-3" />,
+    icon: <Code className="h-3.5 w-3.5" />,
     description: "Cursor, TRAE, Bolt, v0 Prompts",
+    color: "text-green-500",
   },
   {
     id: "github",
     label: "GitHub",
-    icon: <GitBranch className="h-3 w-3" />,
+    icon: <GitBranch className="h-3.5 w-3.5" />,
     description: "Repository, Branches, Commits, CI/CD",
+    color: "text-orange-500",
   },
 ];
+
+// ─── Welcome Card (shown when chat is empty) ──────────────────────────────────
+
+function WelcomeCard({ projectName }: { projectName: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[300px] gap-6 px-4">
+      <div className="text-center space-y-3">
+        <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center mx-auto shadow-lg">
+          <Bot className="h-8 w-8 text-primary-foreground" />
+        </div>
+        <div>
+          <h3 className="text-xl font-bold">TeamPilot AI</h3>
+          <p className="text-muted-foreground text-sm mt-1">
+            AI Project Execution Architect · <span className="font-medium text-foreground">{projectName}</span>
+          </p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 max-w-md w-full">
+        {[
+          { icon: <Brain className="h-4 w-4" />, label: "Architecture Design", desc: "Tech stack & system design" },
+          { icon: <Map className="h-4 w-4" />, label: "Roadmap Planning", desc: "Sprints & task breakdown" },
+          { icon: <Code className="h-4 w-4" />, label: "Vibe Coding", desc: "AI implementation prompts" },
+          { icon: <GitBranch className="h-4 w-4" />, label: "GitHub Workflow", desc: "Repo setup & CI/CD" },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className="rounded-xl border bg-muted/30 p-3 space-y-1 hover:bg-muted/50 transition-colors"
+          >
+            <div className="text-primary">{item.icon}</div>
+            <p className="text-xs font-semibold">{item.label}</p>
+            <p className="text-[11px] text-muted-foreground">{item.desc}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Describe your project idea to begin ✦
+      </p>
+    </div>
+  );
+}
 
 // ─── No Project State ─────────────────────────────────────────────────────────
 
@@ -301,41 +335,57 @@ export default function AIWorkspacePage() {
   const [message, setMessage] = useState("");
   const [activeMode, setActiveMode] = useState<AgentMode>("architect");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Determine if fallback is active based on the last assistant message in the conversation
+  // Determine if fallback is active
   const isFallbackActive = (() => {
     const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isLocal);
     if (assistantMsgs.length === 0) return false;
     const lastMsg = assistantMsgs[assistantMsgs.length - 1];
-    
-    const preferred = settings.preferredProvider && settings.preferredProvider !== "none" 
-      ? settings.preferredProvider 
-      : "gemini";
-      
-    if (lastMsg.provider) {
-      return lastMsg.provider !== preferred;
-    }
-    return false;
+    const preferred =
+      settings.preferredProvider && settings.preferredProvider !== "none"
+        ? settings.preferredProvider
+        : "gemini";
+    return lastMsg.provider ? lastMsg.provider !== preferred : false;
   })();
 
   const providerStatusText = (() => {
     if (!anyProviderConfigured) return "No AI";
     if (isFallbackActive) return "Fallback Active";
-    const preferred = settings.preferredProvider && settings.preferredProvider !== "none" 
-      ? settings.preferredProvider 
-      : "gemini";
-    if (preferred === "gemini") return "Gemini Active";
-    if (preferred === "openrouter") return "OpenRouter Active";
+    const preferred =
+      settings.preferredProvider && settings.preferredProvider !== "none"
+        ? settings.preferredProvider
+        : "gemini";
+    if (preferred === "gemini") return "Gemini";
+    if (preferred === "openrouter") return "OpenRouter";
     return "AI Active";
   })();
 
-  // Auto-scroll to bottom when new messages arrive or AI starts responding
+  // Debug: log message state
+  useEffect(() => {
+    console.log(
+      `[AIWorkspace] Messages state: ${messages.length} total | initialLoadDone=${initialLoadDone} | projectId=${activeProject?.projectId}`
+    );
+    if (messages.length > 0) {
+      console.log("[AIWorkspace] First message:", messages[0]);
+      console.log("[AIWorkspace] Last message:", messages[messages.length - 1]);
+    }
+  }, [messages, initialLoadDone, activeProject?.projectId]);
+
+  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, aiResponding]);
 
-  // ── Build project context for the system prompt ───────────────────────────
+  // Auto-resize textarea
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setMessage(e.target.value);
+    const ta = e.target;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+  };
 
+  // Build project context
   const buildProjectContext = useCallback((): ProjectContext => {
     return {
       projectName: activeProject?.projectName || "",
@@ -355,18 +405,19 @@ export default function AIWorkspacePage() {
     };
   }, [activeProject, activeProjectMembers, userRole, user]);
 
-  // ── Handle sending a message ──────────────────────────────────────────────
-
+  // Send handler
   const handleSend = async () => {
     if (!message.trim() || sending || aiResponding) return;
     if (!anyProviderConfigured) return;
 
     const text = message;
     setMessage("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
 
     const context = buildProjectContext();
     const systemPrompt = buildSystemPrompt(context, activeMode);
-
     await sendAndRespond(text, settings, systemPrompt);
   };
 
@@ -377,8 +428,7 @@ export default function AIWorkspacePage() {
     }
   };
 
-  // ── No project → gate the whole page ──────────────────────────────────────
-
+  // Gate: no project
   if (!activeProject) {
     return (
       <DashboardLayout>
@@ -387,706 +437,418 @@ export default function AIWorkspacePage() {
     );
   }
 
-  // Derived project info
   const progress =
     (activeProject.totalTasks ?? 0) === 0
       ? 0
       : Math.round(
-          ((activeProject.completedTasks ?? 0) /
-            (activeProject.totalTasks ?? 1)) *
-            100
+          ((activeProject.completedTasks ?? 0) / (activeProject.totalTasks ?? 1)) * 100
         );
+
+  const currentMode = MODES.find((m) => m.id === activeMode)!;
+
+  // Determine if there are real messages to show (firestore msgs, not just welcome)
+  const hasRealMessages = messages.length > 0 && !(messages.length === 1 && messages[0].id === "welcome");
 
   return (
     <DashboardLayout>
-      <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
-        {/* ── LEFT PANEL: Project Context ─────────────────────────────────── */}
+      {/* ── Full page column layout ─────────────────────────────────────────── */}
+      <div className="flex flex-col h-[calc(100vh-5rem)] gap-3">
+
+        {/* ── TOP ROW: Compact context cards ────────────────────────────────── */}
         <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="hidden lg:flex w-64 shrink-0 flex-col gap-4"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="grid grid-cols-1 md:grid-cols-2 gap-3 shrink-0"
         >
           {/* Project Context Card */}
-          <Card className="flex-shrink-0">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <FolderKanban className="h-4 w-4 text-primary" />
-                Project Context
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-0.5">
-                  Project
-                </p>
-                <p className="font-semibold truncate">
-                  {activeProject.projectName}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-0.5">
-                  Description
-                </p>
-                <p className="text-xs text-muted-foreground line-clamp-2">
-                  {activeProject.projectDescription || "—"}
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md bg-muted/50 p-2">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                    Role
-                  </p>
-                  <p className="font-medium capitalize text-xs">
-                    {userRole ?? "—"}
-                  </p>
+          <Card className="border bg-card/60 backdrop-blur-sm">
+            <CardContent className="p-3">
+              <div className="flex items-start gap-3">
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <FolderKanban className="h-4 w-4 text-primary" />
                 </div>
-                <div className="rounded-md bg-muted/50 p-2">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                    Phase
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="font-semibold text-sm truncate">{activeProject.projectName}</p>
+                    <Badge variant="outline" className="text-[10px] font-mono shrink-0">
+                      {activeProject.projectCode}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground line-clamp-1 mb-2">
+                    {activeProject.projectDescription || "No description"}
                   </p>
-                  <p className="font-medium text-xs">
-                    {activeProject.currentPhase}
-                  </p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Role</span>
+                      <Badge variant="secondary" className="text-[10px] capitalize px-1.5 py-0">
+                        {userRole ?? "—"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Phase</span>
+                      <span className="text-[10px] font-semibold">{activeProject.currentPhase}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Users className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-[10px] font-semibold">{activeProject.totalMembers} members</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-[10px] font-semibold">{progress}%</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <ShieldCheck className="h-3 w-3 text-primary" />
+                      <span className="text-[10px] text-muted-foreground">{activeProject.leaderName}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="rounded-md bg-muted/50 p-2">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                    Members
-                  </p>
-                  <p className="font-medium text-xs">
-                    {activeProject.totalMembers}
-                  </p>
-                </div>
-                <div className="rounded-md bg-muted/50 p-2">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                    Progress
-                  </p>
-                  <p className="font-medium text-xs">{progress}%</p>
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
-                  Leader
-                </p>
-                <p className="text-xs font-medium flex items-center gap-1">
-                  <ShieldCheck className="h-3 w-3 text-primary" />
-                  {activeProject.leaderName}
-                </p>
-              </div>
-              <div className="pt-1 border-t">
-                <p className="text-[10px] text-muted-foreground font-mono">
-                  {activeProject.projectCode}
-                </p>
               </div>
             </CardContent>
           </Card>
 
-          {/* AI Provider Status Card */}
-          <Card className="flex-shrink-0">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Brain className="h-4 w-4 text-primary" />
-                AI Provider
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {settingsLoading ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="text-xs">Loading...</span>
+          {/* Team Context Card */}
+          <Card className="border bg-card/60 backdrop-blur-sm">
+            <CardContent className="p-3">
+              <div className="flex items-start gap-3">
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <Users className="h-4 w-4 text-primary" />
                 </div>
-              ) : (
-                <>
-                  {/* Gemini */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs">Gemini</span>
-                    {geminiConfigured ? (
-                      <Badge
-                        variant="success"
-                        className="text-[10px] px-1.5 gap-1"
-                      >
-                        <CheckCircle2 className="h-2.5 w-2.5" /> Connected
-                      </Badge>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <p className="font-semibold text-sm">Team Context</p>
+                    {/* AI Provider status */}
+                    <Badge
+                      variant={anyProviderConfigured ? "success" : "secondary"}
+                      className="gap-1 text-[10px] ml-auto"
+                    >
+                      {anyProviderConfigured ? (
+                        <>
+                          <CheckCircle2 className="h-2.5 w-2.5" />
+                          {providerStatusText}
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="h-2.5 w-2.5" />
+                          No AI
+                        </>
+                      )}
+                    </Badge>
+                    {/* Active mode badge */}
+                    <Badge variant="outline" className="gap-1 text-[10px]">
+                      {currentMode.icon}
+                      {currentMode.label}
+                    </Badge>
+                  </div>
+                  {/* Member avatars */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {activeProjectMembers.length === 0 ? (
+                      <span className="text-[11px] text-muted-foreground italic">No members loaded</span>
                     ) : (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px] px-1.5 gap-1"
-                      >
-                        <XCircle className="h-2.5 w-2.5" /> Not set
-                      </Badge>
+                      activeProjectMembers.map((member) => (
+                        <div key={member.userId} className="flex items-center gap-1.5 bg-muted/50 rounded-full px-2 py-0.5">
+                          <Avatar className="h-4 w-4">
+                            <AvatarFallback className="text-[8px] font-bold">
+                              {getInitials(member.name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-[11px] font-medium">{member.name.split(" ")[0]}</span>
+                          {member.role === "leader" && (
+                            <Shield className="h-2.5 w-2.5 text-primary" />
+                          )}
+                        </div>
+                      ))
                     )}
                   </div>
-                  {/* OpenRouter */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs">OpenRouter</span>
-                    {openRouterConfigured ? (
-                      <Badge
-                        variant="success"
-                        className="text-[10px] px-1.5 gap-1"
-                      >
-                        <CheckCircle2 className="h-2.5 w-2.5" /> Connected
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px] px-1.5 gap-1"
-                      >
-                        <XCircle className="h-2.5 w-2.5" /> Not set
-                      </Badge>
-                    )}
-                  </div>
-
-                  {anyProviderConfigured ? (
-                    <div className="pt-2 border-t space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Primary</span>
-                        <span className="font-medium capitalize">
-                          {activeProvider}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                        <span className="text-[10px] text-green-600 dark:text-green-400 font-medium">
-                          Ready
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="pt-2 border-t">
-                      <Link href="/settings?tab=ai">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full gap-1.5 h-7 text-xs"
-                        >
-                          <Settings className="h-3 w-3" />
-                          Configure Keys
-                        </Button>
-                      </Link>
-                    </div>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Team Members Panel */}
-          <Card className="flex-1 overflow-hidden flex flex-col">
-            <CardHeader className="pb-3 shrink-0">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Users className="h-4 w-4 text-primary" />
-                Team ({activeProject.totalMembers})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="overflow-y-auto flex-1 space-y-2 pb-3">
-              {activeProjectMembers.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic">
-                  No members loaded
-                </p>
-              ) : (
-                activeProjectMembers.map((member) => (
-                  <div key={member.userId} className="flex items-center gap-2">
-                    <Avatar className="h-7 w-7 shrink-0">
-                      <AvatarFallback className="text-[10px] font-semibold">
-                        {getInitials(member.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">
-                        {member.name}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground capitalize">
-                        {member.role}
-                      </p>
-                    </div>
-                    {member.role === "leader" && (
-                      <Shield className="h-3 w-3 text-primary shrink-0" />
-                    )}
-                  </div>
-                ))
-              )}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* ── CENTER PANEL: Chat ───────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col gap-3 min-h-0">
-          {/* Mode selector badges */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {MODES.map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setActiveMode(mode.id)}
-                className="focus:outline-none"
-                title={mode.description}
-              >
-                <Badge
-                  variant={activeMode === mode.id ? "default" : "outline"}
-                  className={`gap-1 cursor-pointer transition-all duration-200 ${
-                    activeMode === mode.id
-                      ? "shadow-md scale-105"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  {mode.icon}
-                  {mode.label}
-                </Badge>
-              </button>
-            ))}
-            <span className="text-[10px] text-muted-foreground hidden sm:inline ml-1">
-              {MODES.find((m) => m.id === activeMode)?.description}
-            </span>
-          </div>
+        {/* ── HERO: Full-width AI Chat ───────────────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, delay: 0.1 }}
+          className="flex-1 flex flex-col min-h-0"
+        >
+          <Card className="flex-1 flex flex-col min-h-0 overflow-hidden border">
 
-          {/* Chat Card */}
-          <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
-            {/* ── Chat Header ── */}
-            <CardHeader className="border-b py-3 px-4 shrink-0">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-sm">
-                    <Bot className="h-4.5 w-4.5 text-primary-foreground" />
+            {/* ── Chat Header ───────────────────────────────────────────────── */}
+            <div className="border-b px-5 py-3 shrink-0 flex items-center justify-between gap-4">
+              {/* Left: AI identity */}
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-sm">
+                    <Bot className="h-5 w-5 text-primary-foreground" />
                   </div>
-                  <div>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      TeamPilot AI
-                      <Badge variant="outline" className="text-[10px] font-mono">
-                        {activeProject.projectName}
-                      </Badge>
-                    </CardTitle>
-                    <p className="text-[10px] text-muted-foreground">
-                      AI Project Execution Architect
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {aiResponding && (
-                    <Badge
-                      variant="secondary"
-                      className="gap-1 text-[10px] animate-pulse"
-                    >
-                      <Zap className="h-2.5 w-2.5" />
-                      Thinking...
-                    </Badge>
+                  {anyProviderConfigured && (
+                    <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-green-500 border-2 border-background" />
                   )}
-                  <Badge
-                    variant={anyProviderConfigured ? "success" : "secondary"}
-                    className="gap-1 text-[10px]"
-                  >
-                    {anyProviderConfigured ? (
-                      <>
-                        <CheckCircle2 className="h-2.5 w-2.5" />
-                        {providerStatusText}
-                      </>
-                    ) : (
-                      <>
-                        <AlertCircle className="h-2.5 w-2.5" />
-                        No AI
-                      </>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">TeamPilot AI</span>
+                    {aiResponding && (
+                      <Badge variant="secondary" className="gap-1 text-[10px] animate-pulse h-5">
+                        <Zap className="h-2.5 w-2.5" />
+                        Thinking...
+                      </Badge>
                     )}
-                  </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">AI Project Execution Architect</p>
                 </div>
               </div>
-            </CardHeader>
 
-            {/* ── Messages Area ── */}
-            <CardContent className="flex-1 overflow-y-auto p-4 space-y-5 min-h-0">
-              <AnimatePresence initial={false}>
-                {messages.map((msg, idx) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: idx < 3 ? idx * 0.08 : 0 }}
-                    className={`flex gap-3 ${
-                      msg.role === "user" ? "justify-end" : ""
-                    }`}
+              {/* Right: Mode selector */}
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                {MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    onClick={() => setActiveMode(mode.id)}
+                    title={mode.description}
+                    className="focus:outline-none"
                   >
-                    {/* AI Avatar */}
-                    {(msg.role === "assistant" || msg.role === "system") && (
-                      <Avatar className="h-8 w-8 shrink-0 mt-1">
+                    <Badge
+                      variant={activeMode === mode.id ? "default" : "outline"}
+                      className={`gap-1 cursor-pointer transition-all duration-200 h-6 ${
+                        activeMode === mode.id
+                          ? "shadow-sm"
+                          : "hover:bg-muted"
+                      }`}
+                    >
+                      {mode.icon}
+                      <span className="hidden sm:inline">{mode.label}</span>
+                    </Badge>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Messages Area ─────────────────────────────────────────────── */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {/* Loading state */}
+              {!initialLoadDone ? (
+                <div className="flex flex-col items-center justify-center h-full gap-3">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Loading conversation...</p>
+                </div>
+              ) : !hasRealMessages ? (
+                /* Empty state / Welcome */
+                <WelcomeCard projectName={activeProject.projectName} />
+              ) : (
+                /* Messages */
+                <div className="px-4 md:px-8 lg:px-16 xl:px-24 py-6 space-y-6 max-w-4xl mx-auto w-full">
+                  <AnimatePresence initial={false}>
+                    {messages.map((msg, idx) => {
+                      if (msg.id === "welcome") return null; // skip welcome if real messages exist
+                      return (
+                        <motion.div
+                          key={msg.id}
+                          initial={{ opacity: 0, y: 14 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.25, delay: idx < 4 ? idx * 0.05 : 0 }}
+                          className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                        >
+                          {/* AI Avatar */}
+                          {(msg.role === "assistant" || msg.role === "system") && (
+                            <Avatar className="h-8 w-8 shrink-0 mt-1 shadow-sm">
+                              <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
+                                <Bot className="h-4 w-4" />
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
+
+                          {/* Content */}
+                          <div
+                            className={`space-y-1.5 ${
+                              msg.role === "user"
+                                ? "max-w-[70%] flex flex-col items-end"
+                                : "max-w-[75%]"
+                            }`}
+                          >
+                            {/* AI header */}
+                            {(msg.role === "assistant" || msg.role === "system") && (
+                              <div className="flex items-center gap-2 px-1">
+                                <span className="text-xs font-semibold">TeamPilot AI</span>
+                                {msg.provider && msg.provider !== "" && (
+                                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 capitalize">
+                                    {msg.provider}
+                                  </Badge>
+                                )}
+                                {msg.timestamp && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {formatTime(msg.timestamp)}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Bubble */}
+                            <div
+                              className={`rounded-2xl px-5 py-3.5 ${
+                                msg.role === "user"
+                                  ? "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground rounded-br-sm shadow-sm"
+                                  : "bg-muted/40 border border-border/50 rounded-bl-sm"
+                              }`}
+                            >
+                              {msg.role === "user" ? (
+                                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                                  {msg.content}
+                                </pre>
+                              ) : (
+                                <div className="space-y-1">
+                                  {renderMarkdown(msg.content)}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* User footer */}
+                            {msg.role === "user" && (
+                              <div className="px-1">
+                                {msg.timestamp ? (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {formatTime(msg.timestamp)}
+                                  </span>
+                                ) : msg.isLocal ? (
+                                  <span className="text-[10px] text-muted-foreground italic">
+                                    Sending...
+                                  </span>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* User Avatar */}
+                          {msg.role === "user" && (
+                            <Avatar className="h-8 w-8 shrink-0 mt-1">
+                              <AvatarFallback className="text-xs font-semibold bg-primary/15">
+                                {getInitials(user?.displayName || user?.email || "U")}
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+
+                  {/* AI thinking indicator */}
+                  {aiResponding && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 14 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex gap-3 justify-start"
+                    >
+                      <Avatar className="h-8 w-8 shrink-0 mt-1 shadow-sm">
                         <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
                           <Bot className="h-4 w-4" />
                         </AvatarFallback>
                       </Avatar>
-                    )}
-
-                    {/* Message content */}
-                    <div
-                      className={`max-w-[80%] space-y-1.5 ${
-                        msg.role === "user" ? "flex flex-col items-end" : ""
-                      }`}
-                    >
-                      {/* AI message header: name + provider + timestamp */}
-                      {(msg.role === "assistant" || msg.role === "system") && (
+                      <div className="space-y-1.5">
                         <div className="flex items-center gap-2 px-1">
-                          <span className="text-xs font-semibold text-foreground">
-                            TeamPilot AI
-                          </span>
-                          {msg.provider && msg.provider !== "" && (
-                            <Badge
-                              variant="outline"
-                              className="text-[9px] px-1.5 py-0 h-4 capitalize"
-                            >
-                              {msg.provider}
-                            </Badge>
-                          )}
-                          {msg.timestamp && (
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatTime(msg.timestamp)}
-                            </span>
-                          )}
+                          <span className="text-xs font-semibold">TeamPilot AI</span>
                         </div>
-                      )}
-
-                      {/* Bubble */}
-                      <div
-                        className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                          msg.role === "user"
-                            ? "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground rounded-br-md shadow-sm"
-                            : "bg-muted/50 border border-border/60 rounded-bl-md"
-                        }`}
-                      >
-                        {msg.role === "user" ? (
-                          <pre className="whitespace-pre-wrap font-sans">
-                            {msg.content}
-                          </pre>
-                        ) : (
-                          <div className="space-y-1">
-                            {renderMarkdown(msg.content)}
+                        <div className="rounded-2xl px-5 py-3.5 bg-muted/40 border border-border/50 rounded-bl-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">Thinking</span>
+                            <span className="flex gap-1">
+                              <span
+                                className="h-2 w-2 rounded-full bg-primary/70 animate-bounce"
+                                style={{ animationDelay: "0ms" }}
+                              />
+                              <span
+                                className="h-2 w-2 rounded-full bg-primary/70 animate-bounce"
+                                style={{ animationDelay: "160ms" }}
+                              />
+                              <span
+                                className="h-2 w-2 rounded-full bg-primary/70 animate-bounce"
+                                style={{ animationDelay: "320ms" }}
+                              />
+                            </span>
                           </div>
-                        )}
-                      </div>
-
-                      {/* User message footer: timestamp */}
-                      {msg.role === "user" && (
-                        <div className="flex items-center gap-2 px-1">
-                          {msg.timestamp ? (
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatTime(msg.timestamp)}
-                            </span>
-                          ) : msg.isLocal ? (
-                            <span className="text-[10px] text-muted-foreground italic">
-                              Sending...
-                            </span>
-                          ) : null}
                         </div>
-                      )}
-                    </div>
-
-                    {/* User Avatar */}
-                    {msg.role === "user" && (
-                      <Avatar className="h-8 w-8 shrink-0 mt-1">
-                        <AvatarFallback className="text-xs font-semibold bg-primary/10">
-                          {getInitials(
-                            user?.displayName || user?.email || "U"
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
-                    )}
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-
-              {/* AI thinking indicator with animated dots */}
-              {aiResponding && (
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex gap-3"
-                >
-                  <Avatar className="h-8 w-8 shrink-0 mt-1">
-                    <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
-                      <Bot className="h-4 w-4" />
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 px-1">
-                      <span className="text-xs font-semibold text-foreground">
-                        TeamPilot AI
-                      </span>
-                    </div>
-                    <div className="rounded-2xl px-4 py-3 bg-muted/50 border border-border/60 rounded-bl-md">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          TeamPilot AI is thinking
-                        </span>
-                        <span className="flex gap-0.5">
-                          <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </span>
                       </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
+                    </motion.div>
+                  )}
 
-              <div ref={messagesEndRef} />
-            </CardContent>
-
-            {/* ── Input Area ── */}
-            <div className="border-t p-4 shrink-0">
-              {!anyProviderConfigured && !settingsLoading ? (
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
-                  <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-                  <p className="text-sm text-amber-700 dark:text-amber-400 flex-1">
-                    No AI provider configured. Add an API key in Settings to
-                    start chatting.
-                  </p>
-                  <Link href="/settings?tab=ai">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 shrink-0"
-                    >
-                      <Settings className="h-3.5 w-3.5" />
-                      Settings
-                    </Button>
-                  </Link>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 px-1">
-                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <MessageSquare className="h-3 w-3" />
-                      <span>
-                        {MODES.find((m) => m.id === activeMode)?.label} •{" "}
-                        {providerStatusText}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground ml-auto">
-                      Shift+Enter for newline
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Textarea
-                      placeholder={
-                        anyProviderConfigured
-                          ? "Describe your project idea, ask for architecture advice, or request coding prompts..."
-                          : "Configure an AI provider to start chatting..."
-                      }
-                      className="min-h-[72px] max-h-[160px] resize-none text-sm"
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      disabled={
-                        sending || aiResponding || !anyProviderConfigured
-                      }
-                    />
-                    <Button
-                      className="h-auto px-4 min-w-[48px]"
-                      onClick={handleSend}
-                      disabled={
-                        sending ||
-                        aiResponding ||
-                        !message.trim() ||
-                        !anyProviderConfigured
-                      }
-                    >
-                      {sending || aiResponding ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
+                  <div ref={messagesEndRef} />
                 </div>
               )}
             </div>
-          </Card>
-        </div>
 
-        {/* ── RIGHT PANEL: Prompts / Roadmap / Team Context ────────────────── */}
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="hidden xl:flex w-80 shrink-0 flex-col gap-4"
-        >
-          <Card className="flex-1 flex flex-col overflow-hidden">
-            <CardHeader className="border-b pb-0 shrink-0">
-              <Tabs defaultValue="context">
-                <TabsList className="w-full">
-                  <TabsTrigger value="context" className="flex-1 text-xs">
-                    Context
-                  </TabsTrigger>
-                  <TabsTrigger value="roadmap" className="flex-1 text-xs">
-                    Roadmap
-                  </TabsTrigger>
-                  <TabsTrigger value="prompts" className="flex-1 text-xs">
-                    Prompts
-                  </TabsTrigger>
-                </TabsList>
-
-                {/* ── Team Context Tab ── */}
-                <TabsContent value="context" className="mt-4 space-y-3 pb-4">
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                      Shared Team Context
-                    </p>
-                    <div className="space-y-2">
-                      {/* Project summary */}
-                      <div className="rounded-lg bg-muted/50 p-3 space-y-1">
-                        <p className="text-xs font-medium">
-                          {activeProject.projectName}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground line-clamp-2">
-                          {activeProject.projectDescription || "No description"}
-                        </p>
-                      </div>
-
-                      {/* Phase + Tasks */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="rounded-lg bg-muted/50 p-2 text-center">
-                          <p className="text-lg font-bold text-primary">
-                            {activeProject.currentPhase}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            Current Phase
-                          </p>
-                        </div>
-                        <div className="rounded-lg bg-muted/50 p-2 text-center">
-                          <p className="text-lg font-bold text-primary">
-                            {activeProject.totalTasks ?? 0}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            Total Tasks
-                          </p>
-                        </div>
-                        <div className="rounded-lg bg-muted/50 p-2 text-center">
-                          <p className="text-lg font-bold text-green-600">
-                            {activeProject.completedTasks ?? 0}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            Completed
-                          </p>
-                        </div>
-                        <div className="rounded-lg bg-muted/50 p-2 text-center">
-                          <p className="text-lg font-bold">
-                            {activeProject.totalMembers}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            Members
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Active AI Mode */}
-                      <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 space-y-1">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                          Active AI Mode
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
-                            {MODES.find((m) => m.id === activeMode)?.icon}
-                          </div>
-                          <div>
-                            <p className="text-xs font-semibold">
-                              {MODES.find((m) => m.id === activeMode)?.label}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {
-                                MODES.find((m) => m.id === activeMode)
-                                  ?.description
-                              }
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Member list */}
-                      <div className="space-y-1.5">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                          Team
-                        </p>
-                        {activeProjectMembers.length === 0 ? (
-                          <p className="text-xs text-muted-foreground italic">
-                            No members
-                          </p>
-                        ) : (
-                          activeProjectMembers.map((m) => (
-                            <div
-                              key={m.userId}
-                              className="flex items-center gap-2"
-                            >
-                              <Avatar className="h-5 w-5">
-                                <AvatarFallback className="text-[8px] font-bold">
-                                  {getInitials(m.name)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="text-xs flex-1 truncate">
-                                {m.name}
-                              </span>
-                              <Badge
-                                variant="secondary"
-                                className="text-[9px] px-1 py-0 capitalize"
-                              >
-                                {m.role}
-                              </Badge>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </TabsContent>
-
-                {/* ── Roadmap Tab ── */}
-                <TabsContent value="roadmap" className="mt-4 pb-4">
-                  <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
-                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                      <Map className="h-6 w-6 text-muted-foreground" />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">
-                        No roadmap generated yet
+            {/* ── Input Area (sticky bottom) ─────────────────────────────────── */}
+            <div className="border-t bg-background/95 backdrop-blur-sm shrink-0">
+              <div className="px-4 md:px-8 lg:px-16 xl:px-24 py-4 max-w-4xl mx-auto w-full">
+                {!anyProviderConfigured && !settingsLoading ? (
+                  /* No provider warning */
+                  <div className="flex items-center gap-3 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                        No AI provider configured
                       </p>
-                      <p className="text-xs text-muted-foreground max-w-[200px]">
-                        Ask TeamPilot AI to generate a roadmap for your project
-                        in PM Mode.
+                      <p className="text-xs text-amber-600 dark:text-amber-500">
+                        Add a Gemini or OpenRouter API key in Settings to start chatting.
                       </p>
                     </div>
-                    {userRole === "leader" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-1.5"
-                        disabled
-                      >
-                        <Rocket className="h-3.5 w-3.5" />
-                        Generate Roadmap
+                    <Link href="/settings?tab=ai">
+                      <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
+                        <Settings className="h-3.5 w-3.5" />
+                        Configure
                       </Button>
-                    )}
+                    </Link>
                   </div>
-                </TabsContent>
+                ) : (
+                  /* Input */
+                  <div className="relative">
+                    {/* Mode + provider hint */}
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span className={currentMode.color}>{currentMode.icon}</span>
+                        <span>{currentMode.label} Mode</span>
+                        <span className="text-border">·</span>
+                        <span>{providerStatusText}</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Enter to send · Shift+Enter for newline
+                      </span>
+                    </div>
 
-                {/* ── Prompts Tab ── */}
-                <TabsContent value="prompts" className="mt-4 pb-4">
-                  <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
-                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                      <Code className="h-6 w-6 text-muted-foreground" />
+                    {/* Input box */}
+                    <div className="flex gap-3 items-end">
+                      <div className="flex-1 relative">
+                        <textarea
+                          ref={textareaRef}
+                          placeholder="Describe your project, ask for architecture advice, request a roadmap..."
+                          className="w-full resize-none rounded-xl border border-border/70 bg-muted/30 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 placeholder:text-muted-foreground/60 transition-all min-h-[52px] max-h-[200px] overflow-y-auto leading-relaxed"
+                          value={message}
+                          onChange={handleTextareaChange}
+                          onKeyDown={handleKeyDown}
+                          disabled={sending || aiResponding || !anyProviderConfigured}
+                          rows={1}
+                        />
+                      </div>
+                      <Button
+                        className="h-[52px] w-[52px] rounded-xl shrink-0 p-0"
+                        onClick={handleSend}
+                        disabled={
+                          sending || aiResponding || !message.trim() || !anyProviderConfigured
+                        }
+                      >
+                        {sending || aiResponding ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Send className="h-5 w-5" />
+                        )}
+                      </Button>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">
-                        No prompts generated
-                      </p>
-                      <p className="text-xs text-muted-foreground max-w-[200px]">
-                        Switch to Vibe Coding mode and describe your project to
-                        generate implementation prompts.
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      disabled
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Generate Prompts
-                    </Button>
                   </div>
-                </TabsContent>
-              </Tabs>
-            </CardHeader>
+                )}
+              </div>
+            </div>
           </Card>
         </motion.div>
       </div>

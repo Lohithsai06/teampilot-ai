@@ -61,31 +61,39 @@ export function useAIChat(
       orderBy("timestamp", "asc")
     );
 
+    console.log("[useAIChat] Starting Firestore query for projectId:", projectId);
+
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const msgs = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<ChatMessage, "id">),
-        }));
-        console.log("[useAIChat] Messages loaded:", msgs.length);
+        console.log(
+          `[useAIChat] Snapshot received: ${snap.docs.length} docs | fromCache=${snap.metadata.fromCache} | hasPendingWrites=${snap.metadata.hasPendingWrites}`
+        );
+        const msgs = snap.docs.map((d) => {
+          const data = d.data() as Omit<ChatMessage, "id">;
+          console.log(`  [doc ${d.id}] role=${data.role} | provider=${data.provider} | hasTimestamp=${!!data.timestamp} | contentLen=${data.content?.length}`);
+          return { id: d.id, ...data };
+        });
+
+        console.log(`[useAIChat] Parsed ${msgs.length} messages. Setting state.`);
         setFirestoreMessages(msgs);
 
-        // Clear optimistic messages that now exist in Firestore
+        // Clear optimistic messages whose content now exists in Firestore
         setOptimisticMessages((prev) => {
           if (prev.length === 0) return prev;
-          // Remove optimistic messages whose content matches a Firestore message
           const firestoreContents = new Set(msgs.map((m) => m.content));
           const remaining = prev.filter((om) => !firestoreContents.has(om.content));
+          if (remaining.length !== prev.length) {
+            console.log(`[useAIChat] Cleared ${prev.length - remaining.length} optimistic message(s)`);
+          }
           return remaining;
         });
 
         setLoading(false);
         setInitialLoadDone(true);
-        console.log("[useAIChat] Firestore updated");
       },
       (error) => {
-        console.error("[useAIChat] AI Chat listener error:", error);
+        console.error("[useAIChat] Firestore listener error:", error.code, error.message);
         setLoading(false);
         setInitialLoadDone(true);
       }
