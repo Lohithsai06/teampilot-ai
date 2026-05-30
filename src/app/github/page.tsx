@@ -36,6 +36,7 @@ import {
   Info,
   Loader2,
   FolderGit2,
+  RefreshCw,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useProject } from "@/context/ProjectContext";
@@ -222,6 +223,7 @@ function ConnectRepoForm({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { syncRepository, syncing: syncInProgress } = useGitHubSync();
 
   const handleSave = async () => {
     if (!form.repoUrl.trim() || !form.repoName.trim()) {
@@ -231,7 +233,7 @@ function ConnectRepoForm({
     setSaving(true);
     setError(null);
     try {
-      await addDoc(collection(db, "githubRepositories"), {
+      const docRef = await addDoc(collection(db, "githubRepositories"), {
         projectId,
         repoName: form.repoName.trim(),
         repoUrl: form.repoUrl.trim(),
@@ -239,6 +241,18 @@ function ConnectRepoForm({
         connectedBy: userId,
         connectedAt: serverTimestamp(),
       });
+
+      // Trigger sync after repository is saved
+      const syncResult = await syncRepository(
+        projectId,
+        form.repoUrl.trim()
+      );
+
+      if (!syncResult.success) {
+        console.warn("[GitHub] Sync warning:", syncResult.error);
+        // Don't fail - repository is saved even if sync fails
+      }
+
       onConnected();
     } catch (err) {
       setError("Failed to save repository. Please try again.");
@@ -312,13 +326,13 @@ function ConnectRepoForm({
         </p>
       )}
 
-      <Button onClick={handleSave} disabled={saving} className="w-full gap-2">
-        {saving ? (
+      <Button onClick={handleSave} disabled={saving || syncInProgress} className="w-full gap-2">
+        {saving || syncInProgress ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <Link2 className="h-4 w-4" />
         )}
-        {saving ? "Connecting…" : "Save Repository"}
+        {saving ? "Connecting…" : syncInProgress ? "Syncing commits…" : "Save Repository"}
       </Button>
     </motion.div>
   );
@@ -329,10 +343,17 @@ function ConnectRepoForm({
 export default function GithubPage() {
   const { user } = useAuth();
   const { activeProject, activeProjectMembers } = useProject();
+  const { syncRepository, syncing: syncInProgress } = useGitHubSync();
 
   const [repo, setRepo] = useState<GitHubRepo | null>(null);
   const [repoLoading, setRepoLoading] = useState(true);
   const [showConnectForm, setShowConnectForm] = useState(false);
+  const [repoStats, setRepoStats] = useState<{
+    stars?: number;
+    forks?: number;
+    language?: string;
+    updatedAt?: string;
+  } | null>(null);
 
   const [roadmap, setRoadmap] = useState<RoadmapData | null>(null);
   const [phases, setPhases] = useState<PhaseData[]>([]);
@@ -666,44 +687,91 @@ export default function GithubPage() {
                 </div>
               ) : repo ? (
                 /* Connected state */
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                      <GitBranch className="h-5 w-5 text-primary" />
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                        <GitBranch className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold">{repo.repoName}</h3>
+                        <a
+                          href={repo.repoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-primary hover:underline flex items-center gap-1"
+                        >
+                          {repo.repoUrl}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-semibold">{repo.repoName}</h3>
-                      <a
-                        href={repo.repoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-primary hover:underline flex items-center gap-1"
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="gap-1">
+                        <GitBranch className="h-3 w-3" />
+                        {repo.defaultBranch}
+                      </Badge>
+                      <Badge variant="default" className="gap-1 bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20">
+                        <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Connected
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1 text-muted-foreground hover:text-destructive text-xs"
+                        onClick={async () => {
+                          await deleteDoc(doc(db, "githubRepositories", repo.id));
+                        }}
                       >
-                        {repo.repoUrl}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
+                        <Link2Off className="h-3 w-3" />
+                        Disconnect
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <Badge variant="outline" className="gap-1">
-                      <GitBranch className="h-3 w-3" />
-                      {repo.defaultBranch}
-                    </Badge>
-                    <Badge variant="default" className="gap-1 bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20">
-                      <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      Connected
-                    </Badge>
+
+                  {/* Sync Button and Stats */}
+                  <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t">
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="gap-1 text-muted-foreground hover:text-destructive text-xs"
+                      className="gap-2 flex-1 sm:flex-none"
                       onClick={async () => {
-                        await deleteDoc(doc(db, "githubRepositories", repo.id));
+                        const result = await syncRepository(
+                          activeProject!.projectId,
+                          repo.repoUrl
+                        );
+                        if (result.success) {
+                          console.log(
+                            `[GitHub] Synced ${result.commitsAdded} commits`
+                          );
+                        }
                       }}
+                      disabled={syncInProgress}
                     >
-                      <Link2Off className="h-3 w-3" />
-                      Disconnect
+                      {syncInProgress ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                      {syncInProgress ? "Syncing..." : "Sync Repository"}
                     </Button>
+
+                    {/* Repo Stats */}
+                    {repoStats && (
+                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                        {repoStats.stars !== undefined && (
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Star className="h-3 w-3" />
+                            <span>{repoStats.stars} stars</span>
+                          </div>
+                        )}
+                        {repoStats.language && (
+                          <div className="text-muted-foreground">
+                            {repoStats.language}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : showConnectForm ? (
