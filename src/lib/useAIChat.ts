@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   collection,
   query,
@@ -22,9 +22,9 @@ export interface ChatMessage {
   userId: string;
   role: "user" | "assistant" | "system";
   content: string;
-  provider?: string; // Stored provider name
+  provider?: string;
   timestamp: Timestamp | null;
-  isLocal?: boolean; // Used for the welcome message (not persisted)
+  isLocal?: boolean;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -34,22 +34,26 @@ export function useAIChat(
   userId: string | undefined
 ) {
   const [firestoreMessages, setFirestoreMessages] = useState<ChatMessage[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [aiResponding, setAiResponding] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const optimisticIdCounter = useRef(0);
 
   // ── Firestore real-time listener ──────────────────────────────────────────
 
   useEffect(() => {
     if (!projectId || !userId) {
       setFirestoreMessages([]);
+      setOptimisticMessages([]);
       setLoading(false);
       setInitialLoadDone(false);
       return;
     }
 
     setLoading(true);
+    console.log("[useAIChat] Realtime listener active for project:", projectId);
 
     const q = query(
       collection(db, "aiChats"),
@@ -64,28 +68,44 @@ export function useAIChat(
           id: d.id,
           ...(d.data() as Omit<ChatMessage, "id">),
         }));
+        console.log("[useAIChat] Messages loaded:", msgs.length);
         setFirestoreMessages(msgs);
+
+        // Clear optimistic messages that now exist in Firestore
+        setOptimisticMessages((prev) => {
+          if (prev.length === 0) return prev;
+          // Remove optimistic messages whose content matches a Firestore message
+          const firestoreContents = new Set(msgs.map((m) => m.content));
+          const remaining = prev.filter((om) => !firestoreContents.has(om.content));
+          return remaining;
+        });
+
         setLoading(false);
         setInitialLoadDone(true);
+        console.log("[useAIChat] Firestore updated");
       },
       (error) => {
-        console.error("AI Chat listener error:", error);
+        console.error("[useAIChat] AI Chat listener error:", error);
         setLoading(false);
         setInitialLoadDone(true);
       }
     );
 
-    return () => unsub();
+    return () => {
+      console.log("[useAIChat] Listener detached for project:", projectId);
+      unsub();
+    };
   }, [projectId, userId]);
 
-  // ── Compose displayed messages: welcome + firestore ───────────────────────
+  // ── Compose displayed messages: welcome + firestore + optimistic ──────────
 
   const messages: ChatMessage[] = (() => {
-    // While loading, return empty to avoid flicker
     if (!initialLoadDone) return [];
 
-    // If no Firestore messages, prepend the welcome message
-    if (firestoreMessages.length === 0) {
+    // Combine Firestore messages with optimistic local ones
+    const combined = [...firestoreMessages, ...optimisticMessages];
+
+    if (combined.length === 0) {
       return [
         {
           id: "welcome",
@@ -100,47 +120,8 @@ export function useAIChat(
       ];
     }
 
-    return firestoreMessages;
+    return combined;
   })();
-
-  // ── Send a user message ───────────────────────────────────────────────────
-
-  const sendMessage = useCallback(
-    async (content: string) => {
-      if (!projectId || !userId || !content.trim()) return;
-      setSending(true);
-      try {
-        await addDoc(collection(db, "aiChats"), {
-          projectId,
-          userId,
-          role: "user",
-          content: content.trim(),
-          provider: "",
-          timestamp: serverTimestamp(),
-        });
-      } finally {
-        setSending(false);
-      }
-    },
-    [projectId, userId]
-  );
-
-  // ── Append an assistant response ──────────────────────────────────────────
-
-  const appendAssistant = useCallback(
-    async (content: string) => {
-      if (!projectId || !userId) return;
-      await addDoc(collection(db, "aiChats"), {
-        projectId,
-        userId,
-        role: "assistant",
-        content,
-        provider: "",
-        timestamp: serverTimestamp(),
-      });
-    },
-    [projectId, userId]
-  );
 
   // ── Send message AND get AI response ──────────────────────────────────────
 
@@ -157,31 +138,50 @@ export function useAIChat(
     ) => {
       if (!projectId || !userId || !content.trim()) return;
 
-      // 1. Save user message
+      const trimmed = content.trim();
+
+      // 1. Immediately add optimistic user message to UI
+      const optimisticId = `optimistic-user-${++optimisticIdCounter.current}`;
+      const optimisticUserMsg: ChatMessage = {
+        id: optimisticId,
+        projectId,
+        userId,
+        role: "user",
+        content: trimmed,
+        provider: "",
+        timestamp: null,
+        isLocal: true,
+      };
+      setOptimisticMessages((prev) => [...prev, optimisticUserMsg]);
+
+      // 2. Save user message to Firestore (will trigger realtime update)
       setSending(true);
       try {
         await addDoc(collection(db, "aiChats"), {
           projectId,
           userId,
           role: "user",
-          content: content.trim(),
+          content: trimmed,
           provider: "",
           timestamp: serverTimestamp(),
         });
+        console.log("[useAIChat] User message saved to Firestore");
+      } catch (err) {
+        console.error("[useAIChat] Failed to save user message:", err);
       } finally {
         setSending(false);
       }
 
-      // 2. Build conversation history for AI (last 20 messages for context)
+      // 3. Build conversation history for AI (last 20 messages for context)
       const recentMessages = [
         ...firestoreMessages.slice(-20).map((m) => ({
           role: m.role,
           content: m.content,
         })),
-        { role: "user" as const, content: content.trim() },
+        { role: "user" as const, content: trimmed },
       ];
 
-      // 3. Call AI API
+      // 4. Call AI API
       setAiResponding(true);
       try {
         const res = await fetch("/api/ai-chat", {
@@ -205,8 +205,9 @@ export function useAIChat(
         }
 
         const data = await res.json();
+        console.log("[useAIChat] AI response received, provider:", data.provider);
 
-        // 4. Save AI response to Firestore
+        // 5. Save AI response to Firestore (triggers realtime update for all clients)
         await addDoc(collection(db, "aiChats"), {
           projectId,
           userId: "ai-assistant",
@@ -215,13 +216,15 @@ export function useAIChat(
           provider: data.provider || "gemini",
           timestamp: serverTimestamp(),
         });
+        console.log("[useAIChat] AI response saved to Firestore");
       } catch (error) {
-        // Save error message as an assistant response so the user can see it
+        console.error("[useAIChat] AI API error:", error);
+        // Save error message as an assistant response
         await addDoc(collection(db, "aiChats"), {
           projectId,
           userId: "ai-assistant",
           role: "assistant",
-          content: "Unable to connect to AI provider. Check API keys in Settings.",
+          content: "⚠️ Unable to connect to AI provider. Check API keys in Settings.",
           provider: "",
           timestamp: serverTimestamp(),
         });
@@ -230,6 +233,43 @@ export function useAIChat(
       }
     },
     [projectId, userId, firestoreMessages]
+  );
+
+  // ── Legacy helpers (kept for compatibility) ───────────────────────────────
+
+  const sendMessage = useCallback(
+    async (content: string) => {
+      if (!projectId || !userId || !content.trim()) return;
+      setSending(true);
+      try {
+        await addDoc(collection(db, "aiChats"), {
+          projectId,
+          userId,
+          role: "user",
+          content: content.trim(),
+          provider: "",
+          timestamp: serverTimestamp(),
+        });
+      } finally {
+        setSending(false);
+      }
+    },
+    [projectId, userId]
+  );
+
+  const appendAssistant = useCallback(
+    async (content: string) => {
+      if (!projectId || !userId) return;
+      await addDoc(collection(db, "aiChats"), {
+        projectId,
+        userId,
+        role: "assistant",
+        content,
+        provider: "",
+        timestamp: serverTimestamp(),
+      });
+    },
+    [projectId, userId]
   );
 
   return {

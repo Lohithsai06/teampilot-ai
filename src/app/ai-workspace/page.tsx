@@ -609,7 +609,7 @@ export default function AIWorkspacePage() {
         </motion.div>
 
         {/* ── CENTER PANEL: Chat ───────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col gap-4 min-h-0">
+        <div className="flex-1 flex flex-col gap-3 min-h-0">
           {/* Mode selector badges */}
           <div className="flex items-center gap-2 flex-wrap">
             {MODES.map((mode) => (
@@ -632,28 +632,24 @@ export default function AIWorkspacePage() {
                 </Badge>
               </button>
             ))}
-
-            {/* Active mode description */}
             <span className="text-[10px] text-muted-foreground hidden sm:inline ml-1">
               {MODES.find((m) => m.id === activeMode)?.description}
             </span>
           </div>
 
           {/* Chat Card */}
-          <Card className="flex-1 flex flex-col min-h-0">
-            <CardHeader className="border-b py-3 shrink-0">
+          <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {/* ── Chat Header ── */}
+            <CardHeader className="border-b py-3 px-4 shrink-0">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
-                    <Bot className="h-4 w-4 text-primary-foreground" />
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-sm">
+                    <Bot className="h-4.5 w-4.5 text-primary-foreground" />
                   </div>
                   <div>
                     <CardTitle className="text-base flex items-center gap-2">
                       TeamPilot AI
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] font-mono"
-                      >
+                      <Badge variant="outline" className="text-[10px] font-mono">
                         {activeProject.projectName}
                       </Badge>
                     </CardTitle>
@@ -692,117 +688,143 @@ export default function AIWorkspacePage() {
               </div>
             </CardHeader>
 
-            {/* Messages */}
-            <CardContent className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
-              {!initialLoadDone ? (
-                <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Loading conversation...
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <AnimatePresence initial={false}>
-                    {messages.map((msg, idx) => (
-                      <motion.div
-                        key={msg.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3, delay: idx < 2 ? idx * 0.1 : 0 }}
-                        className={`flex gap-3 ${
-                          msg.role === "user" ? "justify-end" : ""
-                        }`}
-                      >
-                        {(msg.role === "assistant" ||
-                          msg.role === "system") && (
-                          <Avatar className="h-8 w-8 shrink-0 mt-0.5">
-                            <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
-                              <Bot className="h-4 w-4" />
-                            </AvatarFallback>
-                          </Avatar>
-                        )}
-                        <div
-                          className={`max-w-[80%] space-y-1 ${
-                            msg.role === "user" ? "items-end" : ""
-                          }`}
-                        >
-                          <div
-                            className={`rounded-xl p-4 text-sm ${
-                              msg.role === "user"
-                                ? "bg-primary text-primary-foreground rounded-br-sm"
-                                : "bg-muted/60 border rounded-bl-sm"
-                            }`}
-                          >
-                            {msg.role === "user" ? (
-                              <pre className="whitespace-pre-wrap font-sans">
-                                {msg.content}
-                              </pre>
-                            ) : (
-                              <div className="space-y-1">
-                                {renderMarkdown(msg.content)}
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 px-1">
-                            {msg.timestamp && (
-                              <p className="text-[10px] text-muted-foreground">
-                                {formatTime(msg.timestamp)}
-                              </p>
-                            )}
-                            {msg.role === "assistant" && msg.provider === "openrouter" && (
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 px-1.5 py-0 h-4"
-                              >
-                                Fallback Provider Active
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        {msg.role === "user" && (
-                          <Avatar className="h-8 w-8 shrink-0 mt-0.5">
-                            <AvatarFallback className="text-xs font-semibold">
-                              {getInitials(
-                                user?.displayName || user?.email || "U"
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
-                        )}
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-
-                  {/* AI thinking indicator */}
-                  {aiResponding && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex gap-3"
-                    >
-                      <Avatar className="h-8 w-8 shrink-0">
+            {/* ── Messages Area ── */}
+            <CardContent className="flex-1 overflow-y-auto p-4 space-y-5 min-h-0">
+              <AnimatePresence initial={false}>
+                {messages.map((msg, idx) => (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25, delay: idx < 3 ? idx * 0.08 : 0 }}
+                    className={`flex gap-3 ${
+                      msg.role === "user" ? "justify-end" : ""
+                    }`}
+                  >
+                    {/* AI Avatar */}
+                    {(msg.role === "assistant" || msg.role === "system") && (
+                      <Avatar className="h-8 w-8 shrink-0 mt-1">
                         <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
                           <Bot className="h-4 w-4" />
                         </AvatarFallback>
                       </Avatar>
-                      <div className="rounded-xl p-4 bg-muted/60 border rounded-bl-sm">
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                          <span className="text-sm text-muted-foreground">
-                            TeamPilot AI is analyzing your request...
+                    )}
+
+                    {/* Message content */}
+                    <div
+                      className={`max-w-[80%] space-y-1.5 ${
+                        msg.role === "user" ? "flex flex-col items-end" : ""
+                      }`}
+                    >
+                      {/* AI message header: name + provider + timestamp */}
+                      {(msg.role === "assistant" || msg.role === "system") && (
+                        <div className="flex items-center gap-2 px-1">
+                          <span className="text-xs font-semibold text-foreground">
+                            TeamPilot AI
                           </span>
+                          {msg.provider && msg.provider !== "" && (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] px-1.5 py-0 h-4 capitalize"
+                            >
+                              {msg.provider}
+                            </Badge>
+                          )}
+                          {msg.timestamp && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatTime(msg.timestamp)}
+                            </span>
+                          )}
                         </div>
+                      )}
+
+                      {/* Bubble */}
+                      <div
+                        className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                          msg.role === "user"
+                            ? "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground rounded-br-md shadow-sm"
+                            : "bg-muted/50 border border-border/60 rounded-bl-md"
+                        }`}
+                      >
+                        {msg.role === "user" ? (
+                          <pre className="whitespace-pre-wrap font-sans">
+                            {msg.content}
+                          </pre>
+                        ) : (
+                          <div className="space-y-1">
+                            {renderMarkdown(msg.content)}
+                          </div>
+                        )}
                       </div>
-                    </motion.div>
-                  )}
-                </>
+
+                      {/* User message footer: timestamp */}
+                      {msg.role === "user" && (
+                        <div className="flex items-center gap-2 px-1">
+                          {msg.timestamp ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatTime(msg.timestamp)}
+                            </span>
+                          ) : msg.isLocal ? (
+                            <span className="text-[10px] text-muted-foreground italic">
+                              Sending...
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* User Avatar */}
+                    {msg.role === "user" && (
+                      <Avatar className="h-8 w-8 shrink-0 mt-1">
+                        <AvatarFallback className="text-xs font-semibold bg-primary/10">
+                          {getInitials(
+                            user?.displayName || user?.email || "U"
+                          )}
+                        </AvatarFallback>
+                      </Avatar>
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {/* AI thinking indicator with animated dots */}
+              {aiResponding && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex gap-3"
+                >
+                  <Avatar className="h-8 w-8 shrink-0 mt-1">
+                    <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
+                      <Bot className="h-4 w-4" />
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 px-1">
+                      <span className="text-xs font-semibold text-foreground">
+                        TeamPilot AI
+                      </span>
+                    </div>
+                    <div className="rounded-2xl px-4 py-3 bg-muted/50 border border-border/60 rounded-bl-md">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          TeamPilot AI is thinking
+                        </span>
+                        <span className="flex gap-0.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "0ms" }} />
+                          <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "150ms" }} />
+                          <span className="h-1.5 w-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
               )}
+
               <div ref={messagesEndRef} />
             </CardContent>
 
-            {/* Input area */}
+            {/* ── Input Area ── */}
             <div className="border-t p-4 shrink-0">
               {!anyProviderConfigured && !settingsLoading ? (
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
@@ -824,15 +846,17 @@ export default function AIWorkspacePage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {/* Mode indicator */}
                   <div className="flex items-center gap-2 px-1">
                     <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <MessageSquare className="h-3 w-3" />
                       <span>
                         {MODES.find((m) => m.id === activeMode)?.label} •{" "}
-                        {activeProvider}
+                        {providerStatusText}
                       </span>
                     </div>
+                    <span className="text-[10px] text-muted-foreground ml-auto">
+                      Shift+Enter for newline
+                    </span>
                   </div>
                   <div className="flex gap-2">
                     <Textarea
@@ -841,7 +865,7 @@ export default function AIWorkspacePage() {
                           ? "Describe your project idea, ask for architecture advice, or request coding prompts..."
                           : "Configure an AI provider to start chatting..."
                       }
-                      className="min-h-[60px] max-h-[120px] resize-none"
+                      className="min-h-[72px] max-h-[160px] resize-none text-sm"
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
                       onKeyDown={handleKeyDown}
@@ -850,7 +874,7 @@ export default function AIWorkspacePage() {
                       }
                     />
                     <Button
-                      className="h-auto px-4"
+                      className="h-auto px-4 min-w-[48px]"
                       onClick={handleSend}
                       disabled={
                         sending ||
