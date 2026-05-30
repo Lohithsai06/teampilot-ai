@@ -215,7 +215,7 @@ export default function KanbanPage() {
     activeProject?.projectId,
     user?.uid
   );
-  const { columns, loading, error, updateTaskStatus, createTask, deleteTask, getAnalytics } = useKanbanTasks(
+  const { columns, allTasks, loading, error, updateTaskStatus, createTask, deleteTask, getAnalytics } = useKanbanTasks(
     activeProject?.projectId,
     user?.uid
   );
@@ -242,6 +242,84 @@ export default function KanbanPage() {
     pending: 0,
     completionRate: 0,
   });
+
+  // Dynamic Phase Progress calculation
+  const {
+    phaseTitle,
+    phaseSubtitle,
+    phaseProgressPercent,
+    phaseStatusText,
+    totalPhaseTasks,
+    completedPhaseTasks,
+    hasActivePhase
+  } = useMemo(() => {
+    // 1. If no roadmap or phases exist
+    if (!roadmap || !roadmapPhases || roadmapPhases.length === 0) {
+      console.log("[Kanban] Debug Phase Progress: No roadmap generated");
+      return {
+        phaseTitle: "No Active Phase",
+        phaseSubtitle: "No roadmap generated yet",
+        phaseProgressPercent: 0,
+        phaseStatusText: "not_started",
+        totalPhaseTasks: 0,
+        completedPhaseTasks: 0,
+        hasActivePhase: false
+      };
+    }
+
+    // 2. If roadmap exists, find active phase
+    if (!currentActivePhase) {
+      console.log("[Kanban] Debug Phase Progress: Roadmap exists but no current active phase");
+      return {
+        phaseTitle: "No Active Phase",
+        phaseSubtitle: "All phases completed or inactive",
+        phaseProgressPercent: 0,
+        phaseStatusText: "not_started",
+        totalPhaseTasks: 0,
+        completedPhaseTasks: 0,
+        hasActivePhase: false
+      };
+    }
+
+    // 3. Filter tasks belonging to current active phase
+    const phaseTasks = allTasks.filter(
+      (t) => t.phase === currentActivePhase.phaseNumber
+    );
+
+    const total = phaseTasks.length;
+    const completed = phaseTasks.filter((t) => t.status === "completed").length;
+
+    // Progress percentage
+    const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    // Phase status
+    let status: "not_started" | "in_progress" | "completed" = "not_started";
+    if (total > 0) {
+      if (completed === total) {
+        status = "completed";
+      } else if (completed > 0) {
+        status = "in_progress";
+      }
+    }
+
+    console.log("[Kanban] Debug Phase Progress:", {
+      totalTasks: total,
+      completedTasks: completed,
+      currentPhase: `Phase ${currentActivePhase.phaseNumber}: ${currentActivePhase.title}`,
+      calculatedProgress: `${progress}%`,
+      status: status
+    });
+
+    return {
+      phaseTitle: `Phase ${currentActivePhase.phaseNumber}: ${currentActivePhase.title}`,
+      phaseSubtitle: total === 0 ? "No tasks generated yet" : `${completed} of ${total} tasks completed`,
+      phaseProgressPercent: progress,
+      phaseStatusText: status,
+      totalPhaseTasks: total,
+      completedPhaseTasks: completed,
+      hasActivePhase: true
+    };
+  }, [roadmap, roadmapPhases, currentActivePhase, allTasks]);
 
   // Update analytics
   useEffect(() => {
@@ -500,23 +578,65 @@ export default function KanbanPage() {
         </div>
 
         {/* ─ Phase Progress ─ */}
-        {currentActivePhase && (
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-sm font-medium">Phase Progress</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {currentActivePhase.objectives?.length || 0} objectives,{" "}
-                    {currentActivePhase.deliverables?.length || 0} deliverables
-                  </p>
-                </div>
-                <Badge variant="default">{currentActivePhase.status}</Badge>
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Phase Progress
+                </span>
+                <h2 className="text-lg font-bold text-foreground mt-0.5">
+                  {phaseTitle}
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {phaseSubtitle}
+                </p>
               </div>
-              <Progress value={50} className="h-2" />
-            </CardContent>
-          </Card>
-        )}
+              <div className="flex items-center gap-3">
+                {hasActivePhase && totalPhaseTasks > 0 && (
+                  <>
+                    <div className="text-right">
+                      <span className="text-xs text-muted-foreground block font-medium">
+                        Tasks
+                      </span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {completedPhaseTasks} / {totalPhaseTasks}
+                      </span>
+                    </div>
+                    <div className="h-8 w-px bg-border" />
+                  </>
+                )}
+                <div>
+                  <span className="text-xs text-muted-foreground block font-medium mb-0.5">
+                    Status
+                  </span>
+                  <Badge
+                    variant={
+                      phaseStatusText === "completed"
+                        ? "success"
+                        : phaseStatusText === "in_progress"
+                        ? "default"
+                        : "secondary"
+                    }
+                    className="capitalize"
+                  >
+                    {phaseStatusText.replace("_", " ")}
+                  </Badge>
+                </div>
+                <div className="h-8 w-px bg-border" />
+                <div>
+                  <span className="text-xs text-muted-foreground block font-medium">
+                    Progress
+                  </span>
+                  <span className="text-sm font-bold text-primary">
+                    {phaseProgressPercent}%
+                  </span>
+                </div>
+              </div>
+            </div>
+            <Progress value={phaseProgressPercent} className="h-2" />
+          </CardContent>
+        </Card>
 
         {/* ─ Kanban Board ─ */}
         <DndContext
