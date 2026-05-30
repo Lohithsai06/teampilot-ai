@@ -146,9 +146,14 @@ function EmptyRoadmapState({
         )}
 
         {error && (
-          <div className="text-sm text-destructive bg-destructive/10 rounded-lg p-3">
-            <AlertTriangle className="h-4 w-4 inline-block mr-1" />
-            {error}
+          <div className="text-sm text-destructive bg-destructive/10 rounded-lg p-4 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="text-left">
+                <p className="font-medium">Generation Error</p>
+                <p className="text-xs mt-1">{error}</p>
+              </div>
+            </div>
           </div>
         )}
       </motion.div>
@@ -217,11 +222,38 @@ export default function RoadmapPage() {
 
   const isLeader = userRole === "leader";
 
+  // Debug logging for button visibility
+  React.useEffect(() => {
+    console.log(`[RoadmapPage] ── Button Visibility Debug ──`);
+    console.log(`[RoadmapPage]   user.uid: ${user?.uid}`);
+    console.log(`[RoadmapPage]   userRole: ${userRole}`);
+    console.log(`[RoadmapPage]   isLeader: ${isLeader}`);
+    console.log(`[RoadmapPage]   activeProject: ${activeProject?.projectId}`);
+    console.log(`[RoadmapPage]   roadmap exists: ${!!roadmap}`);
+    console.log(`[RoadmapPage]   anyProviderConfigured: ${anyProviderConfigured}`);
+    console.log(`[RoadmapPage]   geminiApiKey exists: ${!!settings.geminiApiKey}`);
+    console.log(`[RoadmapPage]   openRouterApiKey exists: ${!!settings.openRouterApiKey}`);
+    console.log(`[RoadmapPage]   preferredProvider: ${settings.preferredProvider}`);
+  }, [user?.uid, userRole, isLeader, activeProject?.projectId, roadmap, anyProviderConfigured, settings]);
+
   // ── Generate handler ────────────────────────────────────────────────────
 
   const handleGenerate = useCallback(() => {
-    if (!activeProject || !anyProviderConfigured) return;
+    console.log(`[RoadmapPage] ── Generate button clicked ──`);
+    console.log(`[RoadmapPage]   activeProject: ${!!activeProject}`);
+    console.log(`[RoadmapPage]   anyProviderConfigured: ${anyProviderConfigured}`);
 
+    if (!activeProject) {
+      console.warn(`[RoadmapPage]   ❌ No active project`);
+      return;
+    }
+
+    if (!anyProviderConfigured) {
+      console.warn(`[RoadmapPage]   ❌ No AI provider configured`);
+      return;
+    }
+
+    console.log(`[RoadmapPage]   ✅ Calling generateRoadmap`);
     generateRoadmap(
       {
         geminiApiKey: settings.geminiApiKey,

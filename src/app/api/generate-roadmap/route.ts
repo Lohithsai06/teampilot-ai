@@ -225,6 +225,8 @@ function parseRoadmapResponse(raw: string): {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log(`[generate-roadmap] ── API request received ──`);
+
     const body: RoadmapRequestBody = await request.json();
     const {
       geminiApiKey,
@@ -234,7 +236,14 @@ export async function POST(request: NextRequest) {
       projectContext,
     } = body;
 
+    console.log(`[generate-roadmap]   projectName: ${projectContext?.projectName}`);
+    console.log(`[generate-roadmap]   geminiApiKey exists: ${!!geminiApiKey}`);
+    console.log(`[generate-roadmap]   openRouterApiKey exists: ${!!openRouterApiKey}`);
+    console.log(`[generate-roadmap]   preferredProvider: ${preferredProvider}`);
+    console.log(`[generate-roadmap]   fallbackProvider: ${fallbackProvider}`);
+
     if (!projectContext?.projectName) {
+      console.error(`[generate-roadmap] ❌ Missing project context`);
       return NextResponse.json(
         { error: "Project context is required." },
         { status: 400 }
@@ -249,6 +258,9 @@ export async function POST(request: NextRequest) {
       fallbackProvider && fallbackProvider !== "none"
         ? fallbackProvider
         : "openrouter";
+
+    console.log(`[generate-roadmap]   Resolved preferred: ${resolvedPreferred}`);
+    console.log(`[generate-roadmap]   Resolved fallback: ${resolvedFallback}`);
 
     const systemPrompt = buildRoadmapPrompt(projectContext);
 
@@ -267,6 +279,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    console.log(`[generate-roadmap]   Attempts: ${attempts.map((a) => a.name).join(", ")}`);
+
     let lastError: Error | null = null;
     let responseText = "";
     let usedProvider: "gemini" | "openrouter" | null = null;
@@ -274,27 +288,35 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < attempts.length; i++) {
       const attempt = attempts[i];
 
+      console.log(`[generate-roadmap]   Attempt ${i + 1}: ${attempt.name}`);
+
       if (!attempt.key) {
-        lastError = new Error(`Missing API key for ${attempt.name}`);
+        const msg = `Missing API key for ${attempt.name}`;
+        console.warn(`[generate-roadmap]   ⚠️  ${msg}`);
+        lastError = new Error(msg);
         continue;
       }
 
       try {
+        console.log(`[generate-roadmap]   Calling ${attempt.name}...`);
         if (attempt.name === "gemini") {
           responseText = await callGemini(attempt.key, systemPrompt);
         } else {
           responseText = await callOpenRouter(attempt.key, systemPrompt);
         }
+        console.log(`[generate-roadmap]   ✅ ${attempt.name} succeeded, got ${responseText.length} chars`);
         usedProvider = attempt.name;
         break;
       } catch (err) {
-        console.error(`[generate-roadmap] Provider ${attempt.name} failed:`, err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[generate-roadmap]   ❌ ${attempt.name} failed: ${errMsg}`);
         lastError = err instanceof Error ? err : new Error(String(err));
       }
     }
 
     if (!usedProvider || !responseText) {
       const errorMsg = lastError ? lastError.message : "Unknown error";
+      console.error(`[generate-roadmap] ❌ All providers failed: ${errorMsg}`);
       return NextResponse.json(
         {
           error:
@@ -306,21 +328,35 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse the structured response
-    const parsed = parseRoadmapResponse(responseText);
+    try {
+      const parsed = parseRoadmapResponse(responseText);
 
-    console.log(
-      `[generate-roadmap] Generated ${parsed.phases.length} phases via ${usedProvider}`
-    );
+      console.log(
+        `[generate-roadmap] ✅ Generated ${parsed.phases.length} phases via ${usedProvider}`
+      );
 
-    return NextResponse.json({
-      projectSummary: parsed.projectSummary,
-      phases: parsed.phases,
-      provider: usedProvider,
-    });
+      return NextResponse.json({
+        projectSummary: parsed.projectSummary,
+        phases: parsed.phases,
+        provider: usedProvider,
+      });
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : "Unknown parse error";
+      console.error(`[generate-roadmap] ❌ Parse error: ${parseMsg}`);
+      console.error(`[generate-roadmap]   Response text: ${responseText.substring(0, 200)}...`);
+      return NextResponse.json(
+        {
+          error: "Failed to parse AI response",
+          details: parseMsg,
+        },
+        { status: 502 }
+      );
+    }
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "Unknown error occurred";
-    console.error("[generate-roadmap] API error:", message);
+    console.error("[generate-roadmap] ❌ API error:", message);
+    console.error("[generate-roadmap]   Full error:", error);
     return NextResponse.json(
       {
         error: "Failed to generate roadmap.",

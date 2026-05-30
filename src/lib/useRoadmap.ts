@@ -271,28 +271,50 @@ export function useRoadmap(
         console.log(`[useRoadmap]   projectId: ${projectId}`);
         console.log(`[useRoadmap]   userId   : ${userId}`);
         console.log(`[useRoadmap]   project  : ${projectContext.projectName}`);
+        console.log(`[useRoadmap]   preferredProvider: ${aiSettings.preferredProvider}`);
+        console.log(`[useRoadmap]   fallbackProvider: ${aiSettings.fallbackProvider}`);
+        console.log(`[useRoadmap]   geminiApiKey exists: ${!!aiSettings.geminiApiKey}`);
+        console.log(`[useRoadmap]   openRouterApiKey exists: ${!!aiSettings.openRouterApiKey}`);
+
+        const requestBody = {
+          geminiApiKey: aiSettings.geminiApiKey,
+          openRouterApiKey: aiSettings.openRouterApiKey,
+          preferredProvider: aiSettings.preferredProvider,
+          fallbackProvider: aiSettings.fallbackProvider,
+          projectContext,
+        };
+
+        console.log(`[useRoadmap]   Request URL: /api/generate-roadmap`);
+        console.log(`[useRoadmap]   Request body keys: ${Object.keys(requestBody).join(", ")}`);
 
         const res = await fetch("/api/generate-roadmap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            geminiApiKey: aiSettings.geminiApiKey,
-            openRouterApiKey: aiSettings.openRouterApiKey,
-            preferredProvider: aiSettings.preferredProvider,
-            fallbackProvider: aiSettings.fallbackProvider,
-            projectContext,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
+        console.log(`[useRoadmap]   Response status: ${res.status}`);
+        console.log(`[useRoadmap]   Response ok: ${res.ok}`);
+
         if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `API error (${res.status})`);
+          let errData: any = {};
+          try {
+            errData = await res.json();
+          } catch (parseErr) {
+            const text = await res.text();
+            console.error(`[useRoadmap]   Response body (text): ${text}`);
+          }
+
+          const errorMessage = errData.error || errData.details || `API error (${res.status})`;
+          console.error(`[useRoadmap]   Error response:`, errData);
+          throw new Error(errorMessage);
         }
 
         const data = await res.json();
         const { projectSummary, phases: aiPhases } = data;
 
         console.log(`[useRoadmap]   AI returned ${aiPhases?.length ?? 0} phases`);
+        console.log(`[useRoadmap]   Project summary length: ${projectSummary?.length ?? 0}`);
 
         if (!aiPhases || !Array.isArray(aiPhases) || aiPhases.length === 0) {
           throw new Error("AI returned empty or invalid roadmap data");
@@ -359,7 +381,19 @@ export function useRoadmap(
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
         console.error("[useRoadmap] ❌ Generation error:", message);
-        setError(message);
+        console.error("[useRoadmap] Full error:", err);
+
+        // Provide user-friendly error messages
+        let userMessage = message;
+        if (message.includes("API error")) {
+          userMessage = "API error. Please check your AI provider settings.";
+        } else if (message.includes("Missing API key")) {
+          userMessage = "API key is missing. Please configure your AI settings.";
+        } else if (message.includes("fetch")) {
+          userMessage = "Network error. Please check your connection and try again.";
+        }
+
+        setError(userMessage);
       } finally {
         setGenerating(false);
       }
