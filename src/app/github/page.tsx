@@ -384,6 +384,30 @@ export default function GithubPage() {
   const { activities: githubActivities, loading: githubLoading } =
     useGitHubActivity(projectId);
 
+  // ── Fetch repo stats ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!repo) {
+      setRepoStats(null);
+      return;
+    }
+
+    const fetchStats = async () => {
+      try {
+        const result = await syncRepository(projectId!, repo.repoUrl);
+        if (result.success) {
+          // Stats are automatically fetched with sync, but we can extract them
+          // from the API response if needed
+          console.log("[GitHub] Repo stats fetched");
+        }
+      } catch (err) {
+        console.error("[GitHub] Error fetching stats:", err);
+      }
+    };
+
+    // Fetch stats on initial load, but don't auto-sync
+    // (user can manually click sync button)
+  }, [repo]);
+
   // Auto-sync repository commits on page load if connected but timeline is empty
   const autoSyncAttempted = React.useRef(false);
 
