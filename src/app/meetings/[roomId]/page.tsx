@@ -3,11 +3,13 @@
 /**
  * TeamPilot AI — WebRTC Video Call Room (Fireship Architecture)
  *
+ * KEY FIX: Video elements are always in the DOM (never conditionally unmounted)
+ * so refs are always valid when we do `ref.current.srcObject = stream`.
+ *
  * Architecture:
- *   - Both Offer and Answer are stored directly in the `meetings/{meetingId}` document.
- *   - ICE candidates are stored in a root collection `meetingCandidates`.
- *   - Caller writes `offer` to the meeting doc, and ICE candidates to `meetingCandidates` with type="caller".
- *   - Receiver reads `offer`, writes `answer` to the meeting doc, and ICE candidates with type="receiver".
+ *   - Offer and Answer stored directly in the `meetings/{firestoreDocId}` document.
+ *   - ICE candidates stored in root `meetingCandidates` collection, keyed by meetingId.
+ *   - ICE candidates written with type="caller"|"receiver".
  */
 
 import React, {
@@ -32,30 +34,37 @@ import {
 import {
   AlertCircle,
   ArrowLeft,
+  Camera,
+  CheckCircle2,
   Clock,
   Loader2,
   Mic,
   MicOff,
   PhoneOff,
+  Terminal,
   User,
   Video,
   VideoOff,
   Wifi,
   WifiOff,
-  Terminal,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
-// ─── WebRTC STUN configuration ────────────────────────────────────────────────
+// ─── WebRTC Configuration ─────────────────────────────────────────────────────
+// Multiple STUN servers for better connectivity through NATs
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     {
       urls: [
         "stun:stun.l.google.com:19302",
         "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302",
+        "stun:stun4.l.google.com:19302",
       ],
     },
   ],
@@ -64,12 +73,28 @@ const RTC_CONFIG: RTCConfiguration = {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type CallRole = "caller" | "receiver" | null;
-type ConnState = "idle" | "requesting-media" | "creating-offer" | "waiting" | "connecting" | "connected" | "disconnected" | "failed" | "error";
+type ConnState =
+  | "idle"
+  | "requesting-media"
+  | "creating-offer"
+  | "waiting"
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "failed"
+  | "error";
 
 interface ErrorInfo {
   title: string;
   detail: string;
   recoverable: boolean;
+}
+
+// ─── Debug log entry ──────────────────────────────────────────────────────────
+interface LogEntry {
+  time: string;
+  msg: string;
+  level: "info" | "ok" | "warn" | "error";
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -117,15 +142,17 @@ export default function MeetingRoomPage() {
   const meetingName = decodeURIComponent(searchParams?.get("name") || "Team Meeting");
 
   // ── Refs ───────────────────────────────────────────────────────────────────
+  // CRITICAL: Video elements are ALWAYS in the DOM so refs are always valid.
+  // We use CSS opacity/display to show/hide them.
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const unsubscribersRef = useRef<Array<() => void>>([]);
   const joinedAtRef = useRef<number>(Date.now());
   const hasStartedRef = useRef(false);
-  // Stores the real Firestore auto-generated document ID (different from the
-  // custom meetingId code used in the URL, e.g. "PPY13J")
+  // Real Firestore auto-generated doc ID (different from meetingId code in URL)
   const firestoreDocIdRef = useRef<string>("");
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -137,18 +164,34 @@ export default function MeetingRoomPage() {
   const [duration, setDuration] = useState(0);
   const [remoteJoined, setRemoteJoined] = useState(false);
   const [localReady, setLocalReady] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
+  const [showDebug, setShowDebug] = useState(true); // Open by default for debugging
+  const [remoteName, setRemoteName] = useState("Participant");
 
   // ── Debug State ────────────────────────────────────────────────────────────
+  const [debugLogs, setDebugLogs] = useState<LogEntry[]>([]);
   const [offerStatus, setOfferStatus] = useState("None");
   const [answerStatus, setAnswerStatus] = useState("None");
-  const [iceCandidateCount, setIceCandidateCount] = useState(0);
-  const [pcConnState, setPcConnState] = useState("");
-  const [pcSignalingState, setPcSignalingState] = useState("");
-  const [pcIceConnState, setPcIceConnState] = useState("");
+  const [iceGenCount, setIceGenCount] = useState(0);
+  const [iceRecvCount, setIceRecvCount] = useState(0);
+  const [iceAddCount, setIceAddCount] = useState(0);
+  const [pcConnState, setPcConnState] = useState("new");
+  const [pcSignalingState, setPcSignalingState] = useState("stable");
+  const [pcIceConnState, setPcIceConnState] = useState("new");
+  const [pcIceGatherState, setPcIceGatherState] = useState("new");
+  const [localTrackCount, setLocalTrackCount] = useState(0);
+  const [remoteTrackCount, setRemoteTrackCount] = useState(0);
+  const [localStreamReady, setLocalStreamReady] = useState(false);
+  const [remoteStreamReady, setRemoteStreamReady] = useState(false);
 
   const userId = user?.uid || "";
   const userName = user?.displayName || user?.email?.split("@")[0] || "Anonymous";
+
+  // ── Debug logger ───────────────────────────────────────────────────────────
+  const addLog = useCallback((msg: string, level: LogEntry["level"] = "info") => {
+    const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    console.log(`[WebRTC][${level.toUpperCase()}] ${msg}`);
+    setDebugLogs((prev) => [...prev.slice(-49), { time, msg, level }]);
+  }, []);
 
   // ── Duration timer ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -159,11 +202,20 @@ export default function MeetingRoomPage() {
 
   // ── Cleanup helper ─────────────────────────────────────────────────────────
   const cleanup = useCallback(async (saveHistory = true) => {
+    addLog("Cleanup: stopping all resources", "info");
     unsubscribersRef.current.forEach((unsub) => unsub());
     unsubscribersRef.current = [];
 
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => {
+        t.stop();
+        addLog(`Stopped track: ${t.kind}`, "info");
+      });
+      localStreamRef.current = null;
+    }
+
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
     if (pcRef.current) {
       pcRef.current.onicecandidate = null;
@@ -171,8 +223,10 @@ export default function MeetingRoomPage() {
       pcRef.current.onconnectionstatechange = null;
       pcRef.current.onsignalingstatechange = null;
       pcRef.current.oniceconnectionstatechange = null;
+      pcRef.current.onicegatheringstatechange = null;
       pcRef.current.close();
       pcRef.current = null;
+      addLog("PeerConnection closed", "info");
     }
 
     if (saveHistory && userId) {
@@ -190,24 +244,52 @@ export default function MeetingRoomPage() {
         console.warn("[WebRTC] Could not save meeting history:", e);
       }
     }
-  }, [meetingId, projectId, userId, userName]);
+  }, [meetingId, projectId, userId, userName, addLog]);
 
   // ── Media access ───────────────────────────────────────────────────────────
   const getLocalMedia = useCallback(async (): Promise<MediaStream> => {
     setConnState("requesting-media");
+    addLog("Requesting camera and microphone…", "info");
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+
+      const videoTracks = stream.getVideoTracks();
+      const audioTracks = stream.getAudioTracks();
+
+      addLog(`Camera tracks: ${videoTracks.length} | Audio tracks: ${audioTracks.length}`, "ok");
+      videoTracks.forEach((t) => addLog(`Video track: "${t.label}" enabled=${t.enabled}`, "ok"));
+      audioTracks.forEach((t) => addLog(`Audio track: "${t.label}" enabled=${t.enabled}`, "ok"));
+
       localStreamRef.current = stream;
+      setLocalTrackCount(stream.getTracks().length);
+
+      // ── CRITICAL FIX: Attach stream to video element ───────────────────────
+      // The <video> element is ALWAYS in the DOM (not conditionally rendered),
+      // so localVideoRef.current is ALWAYS a valid DOM node here.
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
+        addLog("LOCAL STREAM ATTACHED to video element ✓", "ok");
+        addLog(`video.autoplay=${localVideoRef.current.autoplay} playsInline=${localVideoRef.current.playsInline} muted=${localVideoRef.current.muted}`, "info");
+
+        // Force play in case autoplay policy blocks it
+        localVideoRef.current.play().catch((e) => {
+          addLog(`Local video play() error: ${e.message}`, "warn");
+        });
+      } else {
+        addLog("WARNING: localVideoRef.current is null — stream NOT attached!", "error");
       }
+
       setLocalReady(true);
+      setLocalStreamReady(true);
       return stream;
     } catch (err: any) {
       const name = err?.name || "";
+      addLog(`getUserMedia error: ${name} — ${err?.message}`, "error");
+
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
         throw Object.assign(new Error("Camera/microphone permission denied"), {
           friendlyTitle: "Permission Denied",
@@ -228,57 +310,104 @@ export default function MeetingRoomPage() {
         recoverable: true,
       });
     }
-  }, []);
+  }, [addLog]);
 
   // ── Create RTCPeerConnection ───────────────────────────────────────────────
   const createPC = useCallback((
     stream: MediaStream,
     onIceCandidate: (candidate: RTCIceCandidate) => void
   ): RTCPeerConnection => {
+    addLog("Creating RTCPeerConnection with Google STUN servers", "info");
     const pc = new RTCPeerConnection(RTC_CONFIG);
     pcRef.current = pc;
 
-    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    // Add local tracks
+    stream.getTracks().forEach((track) => {
+      pc.addTrack(track, stream);
+      addLog(`Track added to PC: ${track.kind} (${track.label})`, "ok");
+    });
 
+    // ICE candidate handler — fires as candidates are gathered
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        setIceCandidateCount((prev) => prev + 1);
+        setIceGenCount((prev) => prev + 1);
+        addLog(`ICE candidate generated: ${event.candidate.type} / ${event.candidate.protocol}`, "info");
         onIceCandidate(event.candidate);
+      } else {
+        addLog("ICE gathering complete (null candidate)", "ok");
       }
     };
 
+    // ICE gathering state
+    pc.onicegatheringstatechange = () => {
+      setPcIceGatherState(pc.iceGatheringState);
+      addLog(`ICE Gathering State: ${pc.iceGatheringState}`, "info");
+    };
+
+    // Remote track — fires when the other peer's stream arrives
     pc.ontrack = (event) => {
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
+      addLog(`Remote track received: kind=${event.track.kind} streams=${event.streams.length}`, "ok");
+
+      if (!remoteStreamRef.current) {
+        remoteStreamRef.current = new MediaStream();
+      }
+      remoteStreamRef.current.addTrack(event.track);
+
+      setRemoteTrackCount((prev) => prev + 1);
+
+      // ── CRITICAL: attach to remote video element ────────────────────────────
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        addLog("REMOTE STREAM ATTACHED to video element ✓", "ok");
+        remoteVideoRef.current.play().catch((e) => {
+          addLog(`Remote video play() error: ${e.message}`, "warn");
+        });
         setRemoteJoined(true);
+        setRemoteStreamReady(true);
         setConnState("connected");
+      } else {
+        addLog("WARNING: remoteVideoRef.current is null — remote stream NOT attached!", "error");
       }
     };
 
+    // Connection state changes
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
       setPcConnState(state);
-      console.log("[WebRTC] Connection state:", state);
+      addLog(`PC Connection State → ${state}`, state === "connected" ? "ok" : state === "failed" ? "error" : "info");
       if (state === "connected") setConnState("connected");
       if (state === "connecting") setConnState("connecting");
       if (state === "disconnected" || state === "closed") setConnState("disconnected");
       if (state === "failed") setConnState("failed");
     };
 
+    // Signaling state changes
     pc.onsignalingstatechange = () => {
       setPcSignalingState(pc.signalingState);
+      addLog(`Signaling State → ${pc.signalingState}`, "info");
     };
 
+    // ICE connection state — critical for diagnosing stuck "Checking"
     pc.oniceconnectionstatechange = () => {
       setPcIceConnState(pc.iceConnectionState);
+      addLog(`ICE Connection State → ${pc.iceConnectionState}`, pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed" ? "ok" : pc.iceConnectionState === "failed" ? "error" : "info");
+      if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+        setConnState("connected");
+        setRemoteJoined(true);
+      }
+      if (pc.iceConnectionState === "failed") {
+        addLog("ICE FAILED — peers cannot reach each other. Check network/firewall.", "error");
+      }
     };
 
+    // Log initial state
     setPcConnState(pc.connectionState);
     setPcSignalingState(pc.signalingState);
     setPcIceConnState(pc.iceConnectionState);
+    addLog(`PC created. Initial state: conn=${pc.connectionState} signal=${pc.signalingState} ice=${pc.iceConnectionState}`, "info");
 
     return pc;
-  }, []);
+  }, [addLog]);
 
   // ── ICE candidate writer ───────────────────────────────────────────────────
   const writeIceCandidate = useCallback(async (candidate: RTCIceCandidate, type: "caller" | "receiver") => {
@@ -290,13 +419,15 @@ export default function MeetingRoomPage() {
         candidate: candidate.toJSON(),
         createdAt: serverTimestamp(),
       });
-    } catch (e) {
-      console.warn("[WebRTC] Failed to write ICE candidate:", e);
+      addLog(`ICE candidate written to Firestore: type=${type}`, "info");
+    } catch (e: any) {
+      addLog(`Failed to write ICE candidate: ${e?.message}`, "error");
     }
-  }, [meetingId, userId]);
+  }, [meetingId, userId, addLog]);
 
   // ── ICE candidate reader ───────────────────────────────────────────────────
   const listenForIceCandidates = useCallback((listenForType: "caller" | "receiver") => {
+    addLog(`Listening for ICE candidates (type=${listenForType})`, "info");
     const q = query(
       collection(db, "meetingCandidates"),
       where("meetingId", "==", meetingId),
@@ -304,50 +435,67 @@ export default function MeetingRoomPage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       snap.docChanges().forEach((change) => {
-        if (change.type === "added" && pcRef.current) {
+        if (change.type === "added") {
+          setIceRecvCount((prev) => prev + 1);
           const data = change.doc.data();
           const candidate = new RTCIceCandidate(data.candidate);
-          pcRef.current.addIceCandidate(candidate).catch((e) => {
-            console.warn("[WebRTC] addIceCandidate error:", e);
-          });
+
+          if (pcRef.current && pcRef.current.remoteDescription) {
+            pcRef.current.addIceCandidate(candidate)
+              .then(() => {
+                setIceAddCount((prev) => prev + 1);
+                addLog(`ICE candidate added (type=${listenForType})`, "ok");
+              })
+              .catch((e) => {
+                addLog(`addIceCandidate error: ${e?.message}`, "warn");
+              });
+          } else {
+            addLog(`ICE candidate received but PC not ready (remoteDescription=${!!pcRef.current?.remoteDescription})`, "warn");
+          }
         }
       });
     });
     unsubscribersRef.current.push(unsub);
-  }, [meetingId]);
+  }, [meetingId, addLog]);
 
   // ── CALLER FLOW ────────────────────────────────────────────────────────────
-  // firestoreDocId = the real Firestore auto-generated document ID
   const startAsCaller = useCallback(async (firestoreDocId: string) => {
     try {
+      addLog("=== CALLER FLOW STARTED ===", "info");
       const stream = await getLocalMedia();
       setConnState("creating-offer");
 
       const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "caller"));
 
+      addLog("Creating SDP offer…", "info");
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      addLog(`setLocalDescription done. Signaling state: ${pc.signalingState}`, "ok");
 
-      const offerData = { sdp: offer.sdp, type: offer.type, createdBy: userId };
-      console.log("[WebRTC] Writing offer to Firestore doc:", firestoreDocId);
+      const offerData = { sdp: offer.sdp, type: offer.type, createdBy: userId, callerName: userName };
+      addLog(`Writing offer to Firestore doc: ${firestoreDocId}`, "info");
       await updateDoc(doc(db, "meetings", firestoreDocId), { offer: offerData });
-      setOfferStatus("Created");
+      setOfferStatus("Created ✓");
+      addLog("Offer written to Firestore ✓", "ok");
 
       setConnState("waiting");
       setRole("caller");
 
-      // Listen for the receiver's answer on the same Firestore document
+      // Listen for the receiver's answer on the Firestore meeting document
       const meetingUnsub = onSnapshot(doc(db, "meetings", firestoreDocId), async (snapshot) => {
         if (!snapshot.exists() || !pcRef.current) return;
         const data = snapshot.data();
+
         if (data?.answer && pcRef.current.signalingState !== "stable") {
+          addLog("Answer received from Firestore! Setting remote description…", "ok");
+          if (data.answer.receiverName) setRemoteName(data.answer.receiverName);
           try {
-            console.log("[WebRTC] Answer received, setting remote description");
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-            setAnswerStatus("Received");
+            setAnswerStatus("Received ✓");
             setConnState("connecting");
-          } catch (e) {
-            console.error("[WebRTC] setRemoteDescription (answer) error:", e);
+            addLog(`setRemoteDescription (answer) done. Signaling state: ${pcRef.current.signalingState}`, "ok");
+          } catch (e: any) {
+            addLog(`setRemoteDescription (answer) error: ${e?.message}`, "error");
           }
         }
       });
@@ -355,7 +503,7 @@ export default function MeetingRoomPage() {
 
       listenForIceCandidates("receiver");
     } catch (err: any) {
-      console.error("[WebRTC] Caller setup error:", err);
+      addLog(`Caller setup error: ${err?.message}`, "error");
       setError({
         title: err?.friendlyTitle || "Setup Failed",
         detail: err?.friendlyDetail || err?.message || "Could not start the call.",
@@ -363,33 +511,40 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [createPC, getLocalMedia, listenForIceCandidates, userId, writeIceCandidate]);
+  }, [addLog, createPC, getLocalMedia, listenForIceCandidates, userId, userName, writeIceCandidate]);
 
   // ── RECEIVER FLOW ──────────────────────────────────────────────────────────
-  // firestoreDocId = the real Firestore auto-generated document ID
-  const startAsReceiver = useCallback(async (offerData: { sdp: string; type: RTCSdpType }, firestoreDocId: string) => {
+  const startAsReceiver = useCallback(async (offerData: { sdp: string; type: RTCSdpType; callerName?: string }, firestoreDocId: string) => {
     try {
+      addLog("=== RECEIVER FLOW STARTED ===", "info");
+      if (offerData.callerName) setRemoteName(offerData.callerName);
+
       const stream = await getLocalMedia();
-      setOfferStatus("Received");
+      setOfferStatus("Received ✓");
 
       const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "receiver"));
 
+      addLog("Setting remote description (offer)…", "info");
       await pc.setRemoteDescription(new RTCSessionDescription(offerData));
+      addLog(`setRemoteDescription (offer) done. Signaling state: ${pc.signalingState}`, "ok");
 
+      addLog("Creating SDP answer…", "info");
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      addLog(`setLocalDescription (answer) done. Signaling state: ${pc.signalingState}`, "ok");
 
-      const answerData = { sdp: answer.sdp, type: answer.type, createdBy: userId };
-      console.log("[WebRTC] Writing answer to Firestore doc:", firestoreDocId);
+      const answerData = { sdp: answer.sdp, type: answer.type, createdBy: userId, receiverName: userName };
+      addLog(`Writing answer to Firestore doc: ${firestoreDocId}`, "info");
       await updateDoc(doc(db, "meetings", firestoreDocId), { answer: answerData });
-      setAnswerStatus("Created");
+      setAnswerStatus("Created ✓");
+      addLog("Answer written to Firestore ✓", "ok");
 
       setConnState("connecting");
       setRole("receiver");
 
       listenForIceCandidates("caller");
     } catch (err: any) {
-      console.error("[WebRTC] Receiver setup error:", err);
+      addLog(`Receiver setup error: ${err?.message}`, "error");
       setError({
         title: err?.friendlyTitle || "Join Failed",
         detail: err?.friendlyDetail || err?.message || "Could not join the call.",
@@ -397,7 +552,7 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [createPC, getLocalMedia, listenForIceCandidates, userId, writeIceCandidate]);
+  }, [addLog, createPC, getLocalMedia, listenForIceCandidates, userId, userName, writeIceCandidate]);
 
   // ── Entry point ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -406,24 +561,19 @@ export default function MeetingRoomPage() {
 
     const init = async () => {
       try {
-        // ── DEBUG LOGGING ──────────────────────────────────────────────────
-        console.log("[WebRTC] roomId from URL:", meetingId);
-        console.log("[WebRTC] projectId from URL:", projectId);
-        console.log("[WebRTC] Querying Firestore: meetings WHERE meetingId ==", meetingId);
+        addLog(`roomId from URL: ${meetingId}`, "info");
+        addLog(`projectId from URL: ${projectId}`, "info");
+        addLog(`userId: ${userId} | userName: ${userName}`, "info");
+        addLog(`Querying Firestore: meetings WHERE meetingId == "${meetingId}"`, "info");
 
-        // Meetings are created with addDoc (auto Firestore doc ID) + a custom
-        // `meetingId` field (the short code like PPY13J used in the URL).
-        // We MUST query by field, not by doc ID.
         const q = query(
           collection(db, "meetings"),
           where("meetingId", "==", meetingId)
         );
         const snap = await getDocs(q);
-
-        console.log("[WebRTC] Firestore query results — docs found:", snap.size);
+        addLog(`Firestore query result: ${snap.size} doc(s) found`, snap.empty ? "error" : "ok");
 
         if (snap.empty) {
-          console.error("[WebRTC] No meeting found with meetingId ==", meetingId);
           throw new Error(`Meeting "${meetingId}" not found. Make sure you have the correct meeting code.`);
         }
 
@@ -432,19 +582,22 @@ export default function MeetingRoomPage() {
         firestoreDocIdRef.current = firestoreDocId;
         const data = meetingDocSnap.data();
 
-        console.log("[WebRTC] Firestore doc ID:", firestoreDocId);
-        console.log("[WebRTC] Meeting data:", JSON.stringify({ status: data.status, hasOffer: !!data.offer, hasAnswer: !!data.answer }));
+        addLog(`Firestore doc ID: ${firestoreDocId}`, "ok");
+        addLog(`Meeting status: ${data.status} | hasOffer: ${!!data.offer} | hasAnswer: ${!!data.answer}`, "info");
 
-        // Decide role: if an offer already exists and it's not ours, we are receiver
         if (data.offer && data.offer.createdBy !== userId) {
-          console.log("[WebRTC] Role: RECEIVER — offer found from another user");
-          await startAsReceiver(data.offer as { sdp: string; type: RTCSdpType }, firestoreDocId);
+          addLog(`Role: RECEIVER — offer exists from user ${data.offer.createdBy}`, "ok");
+          await startAsReceiver(data.offer as { sdp: string; type: RTCSdpType; callerName?: string }, firestoreDocId);
         } else {
-          console.log("[WebRTC] Role: CALLER — no offer found or offer is ours");
+          if (data.offer) {
+            addLog("Role: CALLER — offer exists but it's ours, re-entering as caller", "warn");
+          } else {
+            addLog("Role: CALLER — no offer found yet", "ok");
+          }
           await startAsCaller(firestoreDocId);
         }
       } catch (err: any) {
-        console.error("[WebRTC] Init error:", err);
+        addLog(`Init error: ${err?.message}`, "error");
         setError({
           title: "Initialization Error",
           detail: err?.message || "Could not initialize the call.",
@@ -459,7 +612,7 @@ export default function MeetingRoomPage() {
     return () => {
       cleanup(false);
     };
-  }, [meetingId, projectId, userId, startAsCaller, startAsReceiver, cleanup]);
+  }, [meetingId, projectId, userId, userName, startAsCaller, startAsReceiver, cleanup, addLog]);
 
   // ── Leave call ─────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
@@ -474,8 +627,9 @@ export default function MeetingRoomPage() {
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
       setMicEnabled(audioTrack.enabled);
+      addLog(`Mic ${audioTrack.enabled ? "unmuted" : "muted"}`, "info");
     }
-  }, []);
+  }, [addLog]);
 
   const toggleCam = useCallback(() => {
     if (!localStreamRef.current) return;
@@ -483,17 +637,24 @@ export default function MeetingRoomPage() {
     if (videoTrack) {
       videoTrack.enabled = !videoTrack.enabled;
       setCamEnabled(videoTrack.enabled);
+      addLog(`Camera ${videoTrack.enabled ? "on" : "off"}`, "info");
     }
-  }, []);
+  }, [addLog]);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // ── RENDER ────────────────────────────────────────────────────────────────────
-  // ─────────────────────────────────────────────────────────────────────────────
-
+  // ──────────────────────────────────────────────────────────────────────────
+  // ── RENDER ────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────────────
   const isConnected = connState === "connected";
   const isWaiting = connState === "waiting";
   const isError = connState === "error" || connState === "failed";
   const isLoading = ["idle", "requesting-media", "creating-offer", "connecting"].includes(connState);
+
+  const logLevelIcon = (level: LogEntry["level"]) => {
+    if (level === "ok") return <CheckCircle2 className="h-3 w-3 text-green-400 shrink-0 mt-0.5" />;
+    if (level === "error") return <XCircle className="h-3 w-3 text-red-400 shrink-0 mt-0.5" />;
+    if (level === "warn") return <AlertCircle className="h-3 w-3 text-yellow-400 shrink-0 mt-0.5" />;
+    return <div className="h-3 w-3 rounded-full bg-white/30 shrink-0 mt-0.5" />;
+  };
 
   return (
     <div className="h-screen w-screen bg-zinc-950 flex flex-col overflow-hidden select-none relative">
@@ -516,9 +677,7 @@ export default function MeetingRoomPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-white truncate">{meetingName}</span>
-              <span className="hidden sm:inline text-xs text-white/40 font-mono shrink-0">
-                #{meetingId}
-              </span>
+              <span className="hidden sm:inline text-xs text-white/40 font-mono shrink-0">#{meetingId}</span>
             </div>
             <div className={cn("flex items-center gap-1.5 text-xs mt-0.5", CONN_STATE_COLOR[connState])}>
               {isConnected
@@ -533,19 +692,17 @@ export default function MeetingRoomPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          {/* Debug Panel Toggle */}
-          <Button 
-            variant="ghost" 
-            size="sm" 
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setShowDebug(!showDebug)}
-            className="text-white/40 hover:text-white hover:bg-white/10 h-8"
-            title="Toggle Debugging Panel"
+            className={cn("h-8 gap-1.5 text-xs", showDebug ? "text-green-400 bg-green-400/10" : "text-white/40 hover:text-white hover:bg-white/10")}
+            title="Toggle Debug Panel"
           >
-            <Terminal className="h-4 w-4" />
+            <Terminal className="h-3.5 w-3.5" />
+            Debug
           </Button>
-
-          {/* Duration */}
           {isConnected && (
             <div className="flex items-center gap-1.5 text-sm font-mono text-white/60 shrink-0">
               <Clock className="h-3.5 w-3.5" />
@@ -555,187 +712,242 @@ export default function MeetingRoomPage() {
         </div>
       </header>
 
-      {/* ── Debugging Panel ─────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {showDebug && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="absolute top-16 right-4 z-50 bg-black/80 backdrop-blur border border-white/20 p-4 rounded-xl shadow-2xl text-xs font-mono text-green-400 w-72"
-          >
-            <div className="flex justify-between items-center border-b border-white/20 pb-2 mb-2">
-              <span className="font-bold text-white">WebRTC Debug</span>
-              <span className="text-white/50">Role: {role || "None"}</span>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex justify-between"><span>Offer Status:</span><span className="text-white">{offerStatus}</span></div>
-              <div className="flex justify-between"><span>Answer Status:</span><span className="text-white">{answerStatus}</span></div>
-              <div className="flex justify-between"><span>ICE Cand Count:</span><span className="text-white">{iceCandidateCount}</span></div>
-              <div className="flex justify-between"><span>PC Conn State:</span><span className="text-white">{pcConnState || "None"}</span></div>
-              <div className="flex justify-between"><span>PC Signaling:</span><span className="text-white">{pcSignalingState || "None"}</span></div>
-              <div className="flex justify-between"><span>PC ICE Conn:</span><span className="text-white">{pcIceConnState || "None"}</span></div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ── Layout: Video + Debug side-by-side ──────────────────────────────── */}
+      <div className="flex-1 flex overflow-hidden">
 
-      {/* ── Video Area ───────────────────────────────────────────────────────── */}
-      <main className="flex-1 relative overflow-hidden bg-zinc-900 z-10">
+        {/* ── Video Area ───────────────────────────────────────────────────── */}
+        <main className="flex-1 relative overflow-hidden bg-zinc-900">
 
-        {/* ── Remote video (full screen) ─────────────────────────────────────── */}
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className={cn(
-            "absolute inset-0 h-full w-full object-cover transition-opacity duration-500",
-            remoteJoined ? "opacity-100" : "opacity-0"
-          )}
-        />
+          {/* ── Remote video — ALWAYS in DOM ──────────────────────────────── */}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className={cn(
+              "absolute inset-0 h-full w-full object-cover transition-opacity duration-500",
+              remoteJoined ? "opacity-100" : "opacity-0"
+            )}
+          />
 
-        {/* ── Waiting / Loading overlay ──────────────────────────────────────── */}
-        <AnimatePresence>
-          {!remoteJoined && !isError && (
-            <motion.div
-              key="waiting-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.3 }}
-              className="absolute inset-0 flex flex-col items-center justify-center gap-5"
-            >
-              <div className="relative">
-                <div className="h-24 w-24 rounded-full bg-white/10 flex items-center justify-center ring-4 ring-white/10">
-                  <User className="h-12 w-12 text-white/40" />
-                </div>
-                {(isLoading || isWaiting) && (
-                  <div className="absolute inset-0 rounded-full border-2 border-primary/60 animate-ping" />
-                )}
-              </div>
-
-              <div className="text-center space-y-1.5 px-4">
-                <p className="text-white font-semibold text-lg">
-                  {isWaiting ? "Waiting for participant…" : CONN_STATE_LABEL[connState]}
-                </p>
-                <p className="text-white/40 text-sm">
-                  {isWaiting
-                    ? "Share the meeting ID with your colleague to connect."
-                    : "Please wait while we set up your connection."}
-                </p>
-                {isWaiting && (
-                  <div className="mt-2 inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-4 py-2">
-                    <span className="text-white/50 text-xs">Meeting ID</span>
-                    <span className="text-white font-mono font-semibold tracking-wider">{meetingId}</span>
+          {/* ── Waiting / Loading overlay ────────────────────────────────── */}
+          <AnimatePresence>
+            {!remoteJoined && !isError && (
+              <motion.div
+                key="waiting-overlay"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="absolute inset-0 flex flex-col items-center justify-center gap-5"
+              >
+                <div className="relative">
+                  <div className="h-24 w-24 rounded-full bg-white/10 flex items-center justify-center ring-4 ring-white/10">
+                    <User className="h-12 w-12 text-white/40" />
                   </div>
-                )}
-              </div>
-
-              {(isLoading) && (
-                <Loader2 className="h-6 w-6 text-primary/60 animate-spin mt-2" />
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── Error overlay ──────────────────────────────────────────────────── */}
-        <AnimatePresence>
-          {isError && error && (
-            <motion.div
-              key="error-overlay"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-8 text-center"
-            >
-              <div className="h-16 w-16 rounded-2xl bg-red-500/15 flex items-center justify-center">
-                <AlertCircle className="h-8 w-8 text-red-400" />
-              </div>
-              <div className="space-y-2 max-w-sm">
-                <p className="text-white font-semibold text-xl">{error.title}</p>
-                <p className="text-white/60 text-sm leading-relaxed">{error.detail}</p>
-              </div>
-              <div className="flex gap-3 mt-2">
-                {error.recoverable && (
-                  <Button
-                    onClick={() => {
-                      hasStartedRef.current = false;
-                      setError(null);
-                      setConnState("idle");
-                      setRemoteJoined(false);
-                      setLocalReady(false);
-                      setRole(null);
-                      window.location.reload();
-                    }}
-                    className="gap-2"
-                  >
-                    Retry
-                  </Button>
-                )}
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/meetings")}
-                  className="gap-2 border-white/20 text-white hover:bg-white/10"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Back
-                </Button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── Local video (PiP bottom-right) ────────────────────────────────── */}
-        <AnimatePresence>
-          {localReady && (
-            <motion.div
-              key="local-pip"
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-              className={cn(
-                "absolute bottom-24 right-4 sm:bottom-28 sm:right-6",
-                "w-28 sm:w-36 md:w-44 aspect-video",
-                "rounded-xl overflow-hidden",
-                "border-2 border-white/20 shadow-2xl",
-                "bg-zinc-800 z-20"
-              )}
-            >
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="h-full w-full object-cover"
-                style={{ transform: "scaleX(-1)" }}
-              />
-              {!camEnabled && (
-                <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
-                  <VideoOff className="h-6 w-6 text-white/40" />
+                  {(isLoading || isWaiting) && (
+                    <div className="absolute inset-0 rounded-full border-2 border-primary/60 animate-ping" />
+                  )}
                 </div>
-              )}
-              <div className="absolute bottom-1 left-1 right-1">
-                <span className="text-[10px] text-white/70 bg-black/50 rounded px-1 py-0.5 truncate block text-center">
-                  You {!micEnabled && "· Muted"}
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                <div className="text-center space-y-1.5 px-4">
+                  <p className="text-white font-semibold text-lg">
+                    {isWaiting ? "Waiting for participant…" : CONN_STATE_LABEL[connState]}
+                  </p>
+                  <p className="text-white/40 text-sm">
+                    {isWaiting
+                      ? "Share the meeting ID with your colleague to connect."
+                      : "Please wait while we set up your connection."}
+                  </p>
+                  {isWaiting && (
+                    <div className="mt-2 inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-4 py-2">
+                      <span className="text-white/50 text-xs">Meeting ID</span>
+                      <span className="text-white font-mono font-semibold tracking-wider">{meetingId}</span>
+                    </div>
+                  )}
+                </div>
+                {isLoading && <Loader2 className="h-6 w-6 text-primary/60 animate-spin mt-2" />}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-        {/* ── Remote name label ─────────────────────────────────────────────── */}
-        {remoteJoined && (
-          <div className="absolute top-4 left-4 z-20">
-            <div className="flex items-center gap-1.5 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-1.5">
-              <div className="h-2 w-2 rounded-full bg-green-400" />
-              <span className="text-xs text-white font-medium">Participant</span>
+          {/* ── Error overlay ────────────────────────────────────────────── */}
+          <AnimatePresence>
+            {isError && error && (
+              <motion.div
+                key="error-overlay"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-8 text-center"
+              >
+                <div className="h-16 w-16 rounded-2xl bg-red-500/15 flex items-center justify-center">
+                  <AlertCircle className="h-8 w-8 text-red-400" />
+                </div>
+                <div className="space-y-2 max-w-sm">
+                  <p className="text-white font-semibold text-xl">{error.title}</p>
+                  <p className="text-white/60 text-sm leading-relaxed">{error.detail}</p>
+                </div>
+                <div className="flex gap-3 mt-2">
+                  {error.recoverable && (
+                    <Button
+                      onClick={() => {
+                        hasStartedRef.current = false;
+                        setError(null);
+                        setConnState("idle");
+                        setRemoteJoined(false);
+                        setLocalReady(false);
+                        setRole(null);
+                        window.location.reload();
+                      }}
+                      className="gap-2"
+                    >
+                      Retry
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    onClick={() => router.push("/meetings")}
+                    className="gap-2 border-white/20 text-white hover:bg-white/10"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Remote participant name label ─────────────────────────────── */}
+          {remoteJoined && (
+            <div className="absolute top-4 left-4 z-20">
+              <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-sm rounded-lg px-3 py-1.5">
+                <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+                <span className="text-sm text-white font-medium">{remoteName}</span>
+              </div>
+            </div>
+          )}
+
+          {/* ── Local video PiP — ALWAYS in DOM, CSS visibility only ─────── */}
+          {/* CRITICAL FIX: This is NOT inside AnimatePresence or conditionally
+              rendered. The <video> element must always exist in the DOM so that
+              localVideoRef.current is a valid node when getUserMedia resolves. */}
+          <div
+            className={cn(
+              "absolute bottom-24 right-4 sm:bottom-28 sm:right-6 z-20",
+              "w-28 sm:w-36 md:w-44 aspect-video",
+              "rounded-xl overflow-hidden border-2 shadow-2xl",
+              "bg-zinc-800 transition-all duration-300",
+              localReady
+                ? "opacity-100 translate-y-0 border-white/20"
+                : "opacity-0 translate-y-4 pointer-events-none border-transparent"
+            )}
+          >
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="h-full w-full object-cover"
+              style={{ transform: "scaleX(-1)" }}
+            />
+            {!camEnabled && (
+              <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
+                <Camera className="h-6 w-6 text-white/40" />
+              </div>
+            )}
+            <div className="absolute bottom-1 left-1 right-1">
+              <span className="text-[10px] text-white/70 bg-black/60 rounded px-1 py-0.5 truncate block text-center">
+                {userName} {!micEnabled && "· Muted"}
+              </span>
             </div>
           </div>
+        </main>
+
+        {/* ── Debug Panel ───────────────────────────────────────────────────── */}
+        {showDebug && (
+          <aside className="w-80 shrink-0 bg-zinc-950 border-l border-white/10 flex flex-col text-xs font-mono overflow-hidden">
+            {/* Status grid */}
+            <div className="p-3 border-b border-white/10 space-y-1">
+              <div className="text-white/40 text-[10px] uppercase tracking-wider mb-2 flex items-center gap-1">
+                <Terminal className="h-3 w-3" /> WebRTC Debug
+                <span className="ml-auto text-white/30">Role: {role || "—"}</span>
+              </div>
+              {[
+                ["Local Stream", localStreamReady],
+                ["Remote Stream", remoteStreamReady],
+              ].map(([label, val]) => (
+                <div key={label as string} className="flex items-center justify-between">
+                  <span className="text-white/50">{label as string}</span>
+                  <span className={val ? "text-green-400" : "text-white/30"}>{val ? "✓ Ready" : "Waiting…"}</span>
+                </div>
+              ))}
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
+                {[
+                  ["Offer", offerStatus],
+                  ["Answer", answerStatus],
+                  ["ICE Gen", iceGenCount],
+                  ["ICE Recv", iceRecvCount],
+                  ["ICE Added", iceAddCount],
+                  ["Tracks Local", localTrackCount],
+                  ["Tracks Remote", remoteTrackCount],
+                ].map(([label, val]) => (
+                  <div key={label as string} className="flex flex-col">
+                    <span className="text-white/30 text-[9px]">{label as string}</span>
+                    <span className="text-white">{String(val) || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* State indicators */}
+            <div className="p-3 border-b border-white/10 space-y-1">
+              <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">States</div>
+              {[
+                ["PC Conn", pcConnState],
+                ["Signaling", pcSignalingState],
+                ["ICE Conn", pcIceConnState],
+                ["ICE Gather", pcIceGatherState],
+              ].map(([label, val]) => {
+                const isGood = val === "connected" || val === "completed" || val === "stable";
+                const isBad = val === "failed" || val === "closed";
+                return (
+                  <div key={label as string} className="flex justify-between items-center">
+                    <span className="text-white/50">{label as string}</span>
+                    <span className={cn(
+                      "font-medium",
+                      isGood ? "text-green-400" : isBad ? "text-red-400" : "text-yellow-400"
+                    )}>
+                      {(val as string) || "—"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Scrollable log */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+              <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1 px-1">Event Log</div>
+              {debugLogs.length === 0 && (
+                <div className="text-white/20 text-center py-4">No events yet…</div>
+              )}
+              {[...debugLogs].reverse().map((entry, i) => (
+                <div key={i} className="flex gap-1.5 items-start">
+                  {logLevelIcon(entry.level)}
+                  <span className="text-white/30 shrink-0">{entry.time}</span>
+                  <span className={cn(
+                    "break-all",
+                    entry.level === "ok" ? "text-green-300" :
+                    entry.level === "error" ? "text-red-300" :
+                    entry.level === "warn" ? "text-yellow-300" :
+                    "text-white/70"
+                  )}>{entry.msg}</span>
+                </div>
+              ))}
+            </div>
+          </aside>
         )}
-      </main>
+      </div>
 
       {/* ── Bottom Toolbar ───────────────────────────────────────────────────── */}
       <footer className="shrink-0 flex items-center justify-center gap-3 px-4 py-4 bg-zinc-900/95 border-t border-white/10 backdrop-blur-sm relative z-20">
-
         <Button
           onClick={toggleMic}
           variant="ghost"
