@@ -175,9 +175,12 @@ export default function MeetingRoomPage() {
   const [debugLogs, setDebugLogs] = useState<LogEntry[]>([]);
   const [offerStatus, setOfferStatus] = useState("None");
   const [answerStatus, setAnswerStatus] = useState("None");
-  const [iceGenCount, setIceGenCount] = useState(0);
-  const [iceRecvCount, setIceRecvCount] = useState(0);
-  const [iceAddCount, setIceAddCount] = useState(0);
+  const [callerIceGenCount, setCallerIceGenCount] = useState(0);
+  const [callerIceRecvCount, setCallerIceRecvCount] = useState(0);
+  const [callerIceAddCount, setCallerIceAddCount] = useState(0);
+  const [receiverIceGenCount, setReceiverIceGenCount] = useState(0);
+  const [receiverIceRecvCount, setReceiverIceRecvCount] = useState(0);
+  const [receiverIceAddCount, setReceiverIceAddCount] = useState(0);
   const [pcConnState, setPcConnState] = useState("new");
   const [pcSignalingState, setPcSignalingState] = useState("stable");
   const [pcIceConnState, setPcIceConnState] = useState("new");
@@ -344,7 +347,8 @@ export default function MeetingRoomPage() {
   // ── Create RTCPeerConnection ───────────────────────────────────────────────
   const createPC = useCallback((
     stream: MediaStream,
-    onIceCandidate: (candidate: RTCIceCandidate) => void
+    onIceCandidate: (candidate: RTCIceCandidate) => void,
+    myRole: "caller" | "receiver"
   ): RTCPeerConnection => {
     addLog("Creating RTCPeerConnection with Google STUN servers", "info");
     const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -359,8 +363,14 @@ export default function MeetingRoomPage() {
     // ICE candidate handler — fires as candidates are gathered
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        setIceGenCount((prev) => prev + 1);
-        addLog(`ICE candidate generated: ${event.candidate.type} / ${event.candidate.protocol}`, "info");
+        if (myRole === "caller") setCallerIceGenCount((prev) => prev + 1);
+        else setReceiverIceGenCount((prev) => prev + 1);
+        
+        if (myRole === "caller") {
+           addLog(`Caller Generated ICE: ${event.candidate.type} / ${event.candidate.protocol}`, "info");
+        } else {
+           addLog(`Receiver Generated ICE: ${event.candidate.type} / ${event.candidate.protocol}`, "info");
+        }
         onIceCandidate(event.candidate);
       } else {
         addLog("ICE gathering complete (null candidate)", "ok");
@@ -497,7 +507,7 @@ export default function MeetingRoomPage() {
   }, [meetingId, userId, addLog]);
 
   // ── ICE candidate reader ───────────────────────────────────────────────────
-  const listenForIceCandidates = useCallback((listenForType: "caller" | "receiver") => {
+  const listenForIceCandidates = useCallback((listenForType: "caller" | "receiver", myRole: "caller" | "receiver") => {
     addLog(`Listening for ICE candidates (type=${listenForType})`, "info");
     const q = query(
       collection(db, "meetingCandidates"),
@@ -507,19 +517,36 @@ export default function MeetingRoomPage() {
     const unsub = onSnapshot(q, (snap) => {
       snap.docChanges().forEach((change) => {
         if (change.type === "added") {
-          setIceRecvCount((prev) => prev + 1);
+          if (myRole === "caller") {
+            setCallerIceRecvCount((prev) => prev + 1);
+            addLog("Caller Received ICE", "info");
+          } else {
+            setReceiverIceRecvCount((prev) => prev + 1);
+            addLog("Receiver Received ICE", "info");
+          }
+          
           const data = change.doc.data();
           const candidate = new RTCIceCandidate(data.candidate);
 
           if (pcRef.current && pcRef.current.remoteDescription) {
-            pcRef.current.addIceCandidate(candidate)
-              .then(() => {
-                setIceAddCount((prev) => prev + 1);
-                addLog(`ICE candidate added (type=${listenForType})`, "ok");
-              })
-              .catch((e) => {
-                addLog(`addIceCandidate error: ${e?.message}`, "warn");
-              });
+            try {
+              pcRef.current.addIceCandidate(candidate)
+                .then(() => {
+                  if (myRole === "caller") {
+                    setCallerIceAddCount((prev) => prev + 1);
+                    addLog("Caller Added ICE", "info");
+                  } else {
+                    setReceiverIceAddCount((prev) => prev + 1);
+                    addLog("Receiver Added ICE", "info");
+                  }
+                  addLog("Candidate Added Successfully", "ok");
+                })
+                .catch((e) => {
+                  addLog(`Candidate Add Failed: ${e?.message || e}`, "error");
+                });
+            } catch (e: any) {
+              addLog(`Candidate Add Failed: ${e?.message || e}`, "error");
+            }
           } else {
             addLog(`ICE candidate received but PC not ready (remoteDescription=${!!pcRef.current?.remoteDescription})`, "warn");
           }
@@ -536,7 +563,7 @@ export default function MeetingRoomPage() {
       const stream = await getLocalMedia();
       setConnState("creating-offer");
 
-      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "caller"));
+      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "caller"), "caller");
 
       addLog("Creating SDP offer…", "info");
       const offer = await pc.createOffer();
@@ -576,7 +603,7 @@ export default function MeetingRoomPage() {
       });
       unsubscribersRef.current.push(meetingUnsub);
 
-      listenForIceCandidates("receiver");
+      listenForIceCandidates("receiver", "caller");
     } catch (err: any) {
       addLog(`Caller setup error: ${err?.message}`, "error");
       setError({
@@ -597,7 +624,7 @@ export default function MeetingRoomPage() {
       const stream = await getLocalMedia();
       setOfferStatus("Received ✓");
 
-      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "receiver"));
+      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "receiver"), "receiver");
 
       addLog("Setting remote description (offer)…", "info");
       await pc.setRemoteDescription(new RTCSessionDescription(offerData));
@@ -621,7 +648,7 @@ export default function MeetingRoomPage() {
       setConnState("connecting");
       setRole("receiver");
 
-      listenForIceCandidates("caller");
+      listenForIceCandidates("caller", "receiver");
     } catch (err: any) {
       addLog(`Receiver setup error: ${err?.message}`, "error");
       setError({
@@ -1087,9 +1114,12 @@ export default function MeetingRoomPage() {
                 {[
                   ["Offer", offerStatus],
                   ["Answer", answerStatus],
-                  ["ICE Gen", iceGenCount],
-                  ["ICE Recv", iceRecvCount],
-                  ["ICE Added", iceAddCount],
+                  ["Caller Gen ICE", callerIceGenCount],
+                  ["Caller Recv ICE", callerIceRecvCount],
+                  ["Caller Add ICE", callerIceAddCount],
+                  ["Receiver Gen ICE", receiverIceGenCount],
+                  ["Receiver Recv ICE", receiverIceRecvCount],
+                  ["Receiver Add ICE", receiverIceAddCount],
                   ["Tracks Local", localTrackCount],
                   ["Tracks Remote", remoteTrackCount],
                 ].map(([label, val]) => (
