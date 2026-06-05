@@ -166,6 +166,10 @@ export default function MeetingRoomPage() {
   const [localReady, setLocalReady] = useState(false);
   const [showDebug, setShowDebug] = useState(true); // Open by default for debugging
   const [remoteName, setRemoteName] = useState("Participant");
+  const [remoteMicEnabled, setRemoteMicEnabled] = useState(true);
+  const [remoteCamEnabled, setRemoteCamEnabled] = useState(true);
+  const [localVideoPlaying, setLocalVideoPlaying] = useState(false);
+  const [remoteVideoPlaying, setRemoteVideoPlaying] = useState(false);
 
   // ── Debug State ────────────────────────────────────────────────────────────
   const [debugLogs, setDebugLogs] = useState<LogEntry[]>([]);
@@ -247,6 +251,25 @@ export default function MeetingRoomPage() {
   }, [meetingId, projectId, userId, userName, addLog]);
 
   // ── Media access ───────────────────────────────────────────────────────────
+  // ── Log remote video element properties and dimensions ─────────────────────
+  const logVideoDimensions = useCallback(() => {
+    if (remoteVideoRef.current) {
+      const el = remoteVideoRef.current;
+      const computed = window.getComputedStyle(el);
+      addLog(`[CSS] Remote video: ` +
+        `width=${el.width} height=${el.height} ` +
+        `clientWidth=${el.clientWidth} clientHeight=${el.clientHeight} ` +
+        `offsetWidth=${el.offsetWidth} offsetHeight=${el.offsetHeight} ` +
+        `videoWidth=${el.videoWidth} videoHeight=${el.videoHeight}`, "info");
+      addLog(`[CSS] Remote style: ` +
+        `display=${computed.display} visibility=${computed.visibility} ` +
+        `opacity=${computed.opacity} zIndex=${computed.zIndex} ` +
+        `overflow=${computed.overflow}`, "info");
+    } else {
+      addLog("[CSS] Remote video ref is NULL", "warn");
+    }
+  }, [addLog]);
+
   const getLocalMedia = useCallback(async (): Promise<MediaStream> => {
     setConnState("requesting-media");
     addLog("Requesting camera and microphone…", "info");
@@ -276,9 +299,15 @@ export default function MeetingRoomPage() {
         addLog(`video.autoplay=${localVideoRef.current.autoplay} playsInline=${localVideoRef.current.playsInline} muted=${localVideoRef.current.muted}`, "info");
 
         // Force play in case autoplay policy blocks it
-        localVideoRef.current.play().catch((e) => {
-          addLog(`Local video play() error: ${e.message}`, "warn");
-        });
+        localVideoRef.current.play()
+          .then(() => {
+            setLocalVideoPlaying(true);
+            addLog("LOCAL VIDEO PLAY SUCCESS ✓", "ok");
+          })
+          .catch((e) => {
+            setLocalVideoPlaying(false);
+            addLog(`Local video play() error: ${e.message}`, "warn");
+          });
       } else {
         addLog("WARNING: localVideoRef.current is null — stream NOT attached!", "error");
       }
@@ -346,25 +375,59 @@ export default function MeetingRoomPage() {
 
     // Remote track — fires when the other peer's stream arrives
     pc.ontrack = (event) => {
-      addLog(`Remote track received: kind=${event.track.kind} streams=${event.streams.length}`, "ok");
+      // Step 2 & 7: Log detailed track information
+      const track = event.track;
+      const remoteStream = event.streams[0];
+      const streamId = remoteStream ? remoteStream.id : "unknown";
+
+      addLog(`[ontrack] REMOTE TRACK RECEIVED: kind=${track.kind} | ID=${track.id} | readyState=${track.readyState} | enabled=${track.enabled} | muted=${track.muted} | StreamID=${streamId}`, "ok");
+      
+      if (track.kind === "video") {
+        addLog("Video Track Received ✓", "ok");
+      } else if (track.kind === "audio") {
+        addLog("Audio Track Received ✓", "ok");
+      }
 
       if (!remoteStreamRef.current) {
         remoteStreamRef.current = new MediaStream();
+        addLog(`REMOTE STREAM CREATED: id=${remoteStreamRef.current.id}`, "info");
       }
-      remoteStreamRef.current.addTrack(event.track);
+      
+      remoteStreamRef.current.addTrack(track);
 
-      setRemoteTrackCount((prev) => prev + 1);
+      // Log remote stream ID, track count, track kinds
+      const tracks = remoteStreamRef.current.getTracks();
+      addLog(`[RemoteStream] ID=${remoteStreamRef.current.id} | Track count=${tracks.length} | Kinds=[${tracks.map(t => t.kind).join(", ")}]`, "info");
+      setRemoteTrackCount(tracks.length);
 
       // ── CRITICAL: attach to remote video element ────────────────────────────
       if (remoteVideoRef.current) {
+        // Force element properties
         remoteVideoRef.current.srcObject = remoteStreamRef.current;
-        addLog("REMOTE STREAM ATTACHED to video element ✓", "ok");
-        remoteVideoRef.current.play().catch((e) => {
-          addLog(`Remote video play() error: ${e.message}`, "warn");
-        });
+        addLog("REMOTE STREAM ATTACHED TO VIDEO ✓", "ok");
+        
+        // Force style visibility to bypass CSS latency
+        remoteVideoRef.current.style.opacity = "1";
+        remoteVideoRef.current.style.display = "block";
+        
+        remoteVideoRef.current.play()
+          .then(() => {
+            setRemoteVideoPlaying(true);
+            addLog("VIDEO PLAY SUCCESS ✓", "ok");
+          })
+          .catch((e) => {
+            setRemoteVideoPlaying(false);
+            addLog(`VIDEO PLAY FAILED: ${e.message}`, "error");
+          });
+          
         setRemoteJoined(true);
         setRemoteStreamReady(true);
         setConnState("connected");
+        
+        // Trigger style check
+        setTimeout(() => {
+          logVideoDimensions();
+        }, 1000);
       } else {
         addLog("WARNING: remoteVideoRef.current is null — remote stream NOT attached!", "error");
       }
@@ -375,10 +438,18 @@ export default function MeetingRoomPage() {
       const state = pc.connectionState;
       setPcConnState(state);
       addLog(`PC Connection State → ${state}`, state === "connected" ? "ok" : state === "failed" ? "error" : "info");
-      if (state === "connected") setConnState("connected");
-      if (state === "connecting") setConnState("connecting");
-      if (state === "disconnected" || state === "closed") setConnState("disconnected");
-      if (state === "failed") setConnState("failed");
+      
+      // Do not downgrade state to connecting or disconnected if we are already receiving remote tracks
+      const hasTracks = remoteStreamReady && remoteTrackCount > 0;
+      if (state === "connected") {
+        setConnState("connected");
+      } else if (state === "connecting") {
+        if (!hasTracks) setConnState("connecting");
+      } else if (state === "disconnected" || state === "closed") {
+        if (!hasTracks) setConnState("disconnected");
+      } else if (state === "failed") {
+        setConnState("failed");
+      }
     };
 
     // Signaling state changes
@@ -407,7 +478,7 @@ export default function MeetingRoomPage() {
     addLog(`PC created. Initial state: conn=${pc.connectionState} signal=${pc.signalingState} ice=${pc.iceConnectionState}`, "info");
 
     return pc;
-  }, [addLog]);
+  }, [addLog, logVideoDimensions, remoteStreamReady, remoteTrackCount]);
 
   // ── ICE candidate writer ───────────────────────────────────────────────────
   const writeIceCandidate = useCallback(async (candidate: RTCIceCandidate, type: "caller" | "receiver") => {
@@ -474,7 +545,11 @@ export default function MeetingRoomPage() {
 
       const offerData = { sdp: offer.sdp, type: offer.type, createdBy: userId, callerName: userName };
       addLog(`Writing offer to Firestore doc: ${firestoreDocId}`, "info");
-      await updateDoc(doc(db, "meetings", firestoreDocId), { offer: offerData });
+      await updateDoc(doc(db, "meetings", firestoreDocId), {
+        offer: offerData,
+        callerMicEnabled: micEnabled,
+        callerCamEnabled: camEnabled,
+      });
       setOfferStatus("Created ✓");
       addLog("Offer written to Firestore ✓", "ok");
 
@@ -511,7 +586,7 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [addLog, createPC, getLocalMedia, listenForIceCandidates, userId, userName, writeIceCandidate]);
+  }, [addLog, createPC, getLocalMedia, listenForIceCandidates, userId, userName, writeIceCandidate, micEnabled, camEnabled]);
 
   // ── RECEIVER FLOW ──────────────────────────────────────────────────────────
   const startAsReceiver = useCallback(async (offerData: { sdp: string; type: RTCSdpType; callerName?: string }, firestoreDocId: string) => {
@@ -535,7 +610,11 @@ export default function MeetingRoomPage() {
 
       const answerData = { sdp: answer.sdp, type: answer.type, createdBy: userId, receiverName: userName };
       addLog(`Writing answer to Firestore doc: ${firestoreDocId}`, "info");
-      await updateDoc(doc(db, "meetings", firestoreDocId), { answer: answerData });
+      await updateDoc(doc(db, "meetings", firestoreDocId), {
+        answer: answerData,
+        receiverMicEnabled: micEnabled,
+        receiverCamEnabled: camEnabled,
+      });
       setAnswerStatus("Created ✓");
       addLog("Answer written to Firestore ✓", "ok");
 
@@ -552,7 +631,7 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [addLog, createPC, getLocalMedia, listenForIceCandidates, userId, userName, writeIceCandidate]);
+  }, [addLog, createPC, getLocalMedia, listenForIceCandidates, userId, userName, writeIceCandidate, micEnabled, camEnabled]);
 
   // ── Entry point ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -584,6 +663,37 @@ export default function MeetingRoomPage() {
 
         addLog(`Firestore doc ID: ${firestoreDocId}`, "ok");
         addLog(`Meeting status: ${data.status} | hasOffer: ${!!data.offer} | hasAnswer: ${!!data.answer}`, "info");
+
+        // ── TOP-LEVEL MEETING DOCUMENT SNAPSHOT LISTENER ───────────────────────
+        // Listens to status, participant details, mic/camera toggles for BOTH peers
+        const meetingUnsub = onSnapshot(doc(db, "meetings", firestoreDocId), (snapshot) => {
+          if (!snapshot.exists()) return;
+          const docData = snapshot.data();
+          const isCaller = docData.offer && docData.offer.createdBy === userId;
+          
+          if (isCaller) {
+            if (docData.answer?.receiverName) {
+              setRemoteName(docData.answer.receiverName);
+            }
+            if (docData.receiverMicEnabled !== undefined) {
+              setRemoteMicEnabled(docData.receiverMicEnabled);
+            }
+            if (docData.receiverCamEnabled !== undefined) {
+              setRemoteCamEnabled(docData.receiverCamEnabled);
+            }
+          } else {
+            if (docData.offer?.callerName) {
+              setRemoteName(docData.offer.callerName);
+            }
+            if (docData.callerMicEnabled !== undefined) {
+              setRemoteMicEnabled(docData.callerMicEnabled);
+            }
+            if (docData.callerCamEnabled !== undefined) {
+              setRemoteCamEnabled(docData.callerCamEnabled);
+            }
+          }
+        });
+        unsubscribersRef.current.push(meetingUnsub);
 
         if (data.offer && data.offer.createdBy !== userId) {
           addLog(`Role: RECEIVER — offer exists from user ${data.offer.createdBy}`, "ok");
@@ -620,34 +730,53 @@ export default function MeetingRoomPage() {
     router.push("/meetings");
   }, [cleanup, router]);
 
+  // Function to sync mic/camera state to Firestore
+  const updateLocalMediaStatus = useCallback(async (newMic: boolean, newCam: boolean) => {
+    if (!firestoreDocIdRef.current || !role) return;
+    try {
+      const fieldPrefix = role === "caller" ? "caller" : "receiver";
+      await updateDoc(doc(db, "meetings", firestoreDocIdRef.current), {
+        [`${fieldPrefix}MicEnabled`]: newMic,
+        [`${fieldPrefix}CamEnabled`]: newCam,
+      });
+      addLog(`Updated Firestore media status: mic=${newMic}, cam=${newCam}`, "info");
+    } catch (e: any) {
+      addLog(`Failed to update Firestore media status: ${e.message}`, "warn");
+    }
+  }, [role, addLog]);
+
   // ── Toggles ────────────────────────────────────────────────────────────────
   const toggleMic = useCallback(() => {
     if (!localStreamRef.current) return;
     const audioTrack = localStreamRef.current.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
-      setMicEnabled(audioTrack.enabled);
-      addLog(`Mic ${audioTrack.enabled ? "unmuted" : "muted"}`, "info");
+      const newMic = audioTrack.enabled;
+      setMicEnabled(newMic);
+      addLog(`Mic ${newMic ? "unmuted" : "muted"}`, "info");
+      updateLocalMediaStatus(newMic, camEnabled);
     }
-  }, [addLog]);
+  }, [camEnabled, updateLocalMediaStatus, addLog]);
 
   const toggleCam = useCallback(() => {
     if (!localStreamRef.current) return;
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.enabled = !videoTrack.enabled;
-      setCamEnabled(videoTrack.enabled);
-      addLog(`Camera ${videoTrack.enabled ? "on" : "off"}`, "info");
+      const newCam = videoTrack.enabled;
+      setCamEnabled(newCam);
+      addLog(`Camera ${newCam ? "on" : "off"}`, "info");
+      updateLocalMediaStatus(micEnabled, newCam);
     }
-  }, [addLog]);
+  }, [micEnabled, updateLocalMediaStatus, addLog]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // ── RENDER ────────────────────────────────────────────────────────────────
   // ──────────────────────────────────────────────────────────────────────────
-  const isConnected = connState === "connected";
-  const isWaiting = connState === "waiting";
+  const isConnected = connState === "connected" || (remoteStreamReady && remoteTrackCount > 0);
+  const isWaiting = connState === "waiting" && !(remoteStreamReady && remoteTrackCount > 0);
   const isError = connState === "error" || connState === "failed";
-  const isLoading = ["idle", "requesting-media", "creating-offer", "connecting"].includes(connState);
+  const isLoading = ["idle", "requesting-media", "creating-offer", "connecting"].includes(connState) && !(remoteStreamReady && remoteTrackCount > 0);
 
   const logLevelIcon = (level: LogEntry["level"]) => {
     if (level === "ok") return <CheckCircle2 className="h-3 w-3 text-green-400 shrink-0 mt-0.5" />;
@@ -723,11 +852,30 @@ export default function MeetingRoomPage() {
             ref={remoteVideoRef}
             autoPlay
             playsInline
+            muted={false}
+            controls={false}
             className={cn(
               "absolute inset-0 h-full w-full object-cover transition-opacity duration-500",
-              remoteJoined ? "opacity-100" : "opacity-0"
+              remoteJoined && remoteCamEnabled ? "opacity-100" : "opacity-0"
             )}
           />
+
+          {/* ── Remote camera off avatar placeholder ─────────────────────── */}
+          {remoteJoined && !remoteCamEnabled && (
+            <div className="absolute inset-0 bg-zinc-900 flex flex-col items-center justify-center gap-4 z-10 animate-fade-in">
+              <div className="h-32 w-32 rounded-full bg-gradient-to-tr from-primary to-purple-600 flex items-center justify-center ring-4 ring-white/10 shadow-2xl">
+                <span className="text-white text-4xl font-semibold uppercase select-none">
+                  {remoteName ? remoteName.slice(0, 2) : "P"}
+                </span>
+              </div>
+              <div className="text-center">
+                <p className="text-white font-medium text-lg">{remoteName}</p>
+                <p className="text-white/40 text-xs uppercase tracking-wider mt-1">
+                  {role === "caller" ? "Receiver" : "Caller"}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* ── Waiting / Loading overlay ────────────────────────────────── */}
           <AnimatePresence>
@@ -815,12 +963,35 @@ export default function MeetingRoomPage() {
             )}
           </AnimatePresence>
 
-          {/* ── Remote participant name label ─────────────────────────────── */}
+          {/* ── Remote participant details ─────────────────────────────── */}
           {remoteJoined && (
             <div className="absolute top-4 left-4 z-20">
-              <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-sm rounded-lg px-3 py-1.5">
+              <div className="flex items-center gap-2 bg-black/70 backdrop-blur-md rounded-lg px-3 py-1.5 border border-white/10 animate-fade-in">
                 <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+                
+                {/* Mini avatar */}
+                <div className="h-5 w-5 rounded-full bg-gradient-to-tr from-primary to-purple-600 flex items-center justify-center text-[10px] text-white font-bold uppercase select-none">
+                  {remoteName ? remoteName.slice(0, 1) : "P"}
+                </div>
+                
                 <span className="text-sm text-white font-medium">{remoteName}</span>
+                
+                <span className="text-[10px] text-white/40 bg-white/10 rounded px-1.5 py-0.5 uppercase tracking-wider scale-90 shrink-0">
+                  {role === "caller" ? "Receiver" : "Caller"}
+                </span>
+                
+                <div className="flex items-center gap-1.5 ml-1 border-l border-white/20 pl-2">
+                  {remoteMicEnabled ? (
+                    <Mic className="h-3.5 w-3.5 text-green-400" />
+                  ) : (
+                    <MicOff className="h-3.5 w-3.5 text-red-400 animate-pulse" />
+                  )}
+                  {remoteCamEnabled ? (
+                    <Video className="h-3.5 w-3.5 text-green-400" />
+                  ) : (
+                    <VideoOff className="h-3.5 w-3.5 text-red-400 animate-pulse" />
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -849,14 +1020,29 @@ export default function MeetingRoomPage() {
               style={{ transform: "scaleX(-1)" }}
             />
             {!camEnabled && (
-              <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
-                <Camera className="h-6 w-6 text-white/40" />
+              <div className="absolute inset-0 bg-zinc-800 flex flex-col items-center justify-center gap-1">
+                <div className="h-8 w-8 rounded-full bg-white/10 flex items-center justify-center">
+                  <VideoOff className="h-4 w-4 text-white/40" />
+                </div>
+                <span className="text-[10px] text-white/40">Camera Off</span>
               </div>
             )}
-            <div className="absolute bottom-1 left-1 right-1">
-              <span className="text-[10px] text-white/70 bg-black/60 rounded px-1 py-0.5 truncate block text-center">
-                {userName} {!micEnabled && "· Muted"}
+            <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between gap-1 bg-black/75 rounded px-2 py-0.5">
+              <span className="text-[10px] text-white/90 font-medium truncate max-w-[60%]">
+                {userName} (You)
               </span>
+              <div className="flex items-center gap-1 shrink-0">
+                {micEnabled ? (
+                  <Mic className="h-3 w-3 text-green-400" />
+                ) : (
+                  <MicOff className="h-3 w-3 text-red-400" />
+                )}
+                {camEnabled ? (
+                  <Video className="h-3 w-3 text-green-400" />
+                ) : (
+                  <VideoOff className="h-3 w-3 text-red-400" />
+                )}
+              </div>
             </div>
           </div>
         </main>
@@ -871,15 +1057,33 @@ export default function MeetingRoomPage() {
                 <span className="ml-auto text-white/30">Role: {role || "—"}</span>
               </div>
               {[
-                ["Local Stream", localStreamReady],
-                ["Remote Stream", remoteStreamReady],
+                ["Local Stream Ready", localStreamReady],
+                ["Remote Stream Ready", remoteStreamReady],
+                ["Local Video Attached", !!(localVideoRef.current && localVideoRef.current.srcObject)],
+                ["Remote Video Attached", !!(remoteVideoRef.current && remoteVideoRef.current.srcObject)],
+                ["Local Video Playing", localVideoPlaying],
+                ["Remote Video Playing", remoteVideoPlaying],
+                ["Local Video Mounted", !!localVideoRef.current],
+                ["Remote Video Mounted", !!remoteVideoRef.current],
               ].map(([label, val]) => (
                 <div key={label as string} className="flex items-center justify-between">
                   <span className="text-white/50">{label as string}</span>
-                  <span className={val ? "text-green-400" : "text-white/30"}>{val ? "✓ Ready" : "Waiting…"}</span>
+                  <span className={val ? "text-green-400" : "text-white/30"}>{val ? "✓ Yes" : "No"}</span>
                 </div>
               ))}
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
+              
+              <div className="mt-2 pt-2 border-t border-white/5 space-y-1">
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">Local Stream ID</span>
+                  <span className="text-white truncate font-mono text-[10px]">{localStreamRef.current?.id || "—"}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">Remote Stream ID</span>
+                  <span className="text-white truncate font-mono text-[10px]">{remoteStreamRef.current?.id || "—"}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 pt-2 border-t border-white/5">
                 {[
                   ["Offer", offerStatus],
                   ["Answer", answerStatus],
