@@ -22,7 +22,7 @@ import {
   addDoc,
   collection,
   doc,
-  getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -124,6 +124,9 @@ export default function MeetingRoomPage() {
   const unsubscribersRef = useRef<Array<() => void>>([]);
   const joinedAtRef = useRef<number>(Date.now());
   const hasStartedRef = useRef(false);
+  // Stores the real Firestore auto-generated document ID (different from the
+  // custom meetingId code used in the URL, e.g. "PPY13J")
+  const firestoreDocIdRef = useRef<string>("");
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [connState, setConnState] = useState<ConnState>("idle");
@@ -314,7 +317,8 @@ export default function MeetingRoomPage() {
   }, [meetingId]);
 
   // ── CALLER FLOW ────────────────────────────────────────────────────────────
-  const startAsCaller = useCallback(async () => {
+  // firestoreDocId = the real Firestore auto-generated document ID
+  const startAsCaller = useCallback(async (firestoreDocId: string) => {
     try {
       const stream = await getLocalMedia();
       setConnState("creating-offer");
@@ -323,19 +327,22 @@ export default function MeetingRoomPage() {
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      
+
       const offerData = { sdp: offer.sdp, type: offer.type, createdBy: userId };
-      await updateDoc(doc(db, "meetings", meetingId), { offer: offerData });
+      console.log("[WebRTC] Writing offer to Firestore doc:", firestoreDocId);
+      await updateDoc(doc(db, "meetings", firestoreDocId), { offer: offerData });
       setOfferStatus("Created");
 
       setConnState("waiting");
       setRole("caller");
 
-      const meetingUnsub = onSnapshot(doc(db, "meetings", meetingId), async (snapshot) => {
+      // Listen for the receiver's answer on the same Firestore document
+      const meetingUnsub = onSnapshot(doc(db, "meetings", firestoreDocId), async (snapshot) => {
         if (!snapshot.exists() || !pcRef.current) return;
         const data = snapshot.data();
         if (data?.answer && pcRef.current.signalingState !== "stable") {
           try {
+            console.log("[WebRTC] Answer received, setting remote description");
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
             setAnswerStatus("Received");
             setConnState("connecting");
@@ -356,10 +363,11 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, writeIceCandidate]);
+  }, [createPC, getLocalMedia, listenForIceCandidates, userId, writeIceCandidate]);
 
   // ── RECEIVER FLOW ──────────────────────────────────────────────────────────
-  const startAsReceiver = useCallback(async (offerData: { sdp: string; type: RTCSdpType }) => {
+  // firestoreDocId = the real Firestore auto-generated document ID
+  const startAsReceiver = useCallback(async (offerData: { sdp: string; type: RTCSdpType }, firestoreDocId: string) => {
     try {
       const stream = await getLocalMedia();
       setOfferStatus("Received");
@@ -372,7 +380,8 @@ export default function MeetingRoomPage() {
       await pc.setLocalDescription(answer);
 
       const answerData = { sdp: answer.sdp, type: answer.type, createdBy: userId };
-      await updateDoc(doc(db, "meetings", meetingId), { answer: answerData });
+      console.log("[WebRTC] Writing answer to Firestore doc:", firestoreDocId);
+      await updateDoc(doc(db, "meetings", firestoreDocId), { answer: answerData });
       setAnswerStatus("Created");
 
       setConnState("connecting");
@@ -388,7 +397,7 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, writeIceCandidate]);
+  }, [createPC, getLocalMedia, listenForIceCandidates, userId, writeIceCandidate]);
 
   // ── Entry point ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -397,16 +406,42 @@ export default function MeetingRoomPage() {
 
     const init = async () => {
       try {
-        const meetingDoc = await getDoc(doc(db, "meetings", meetingId));
-        if (!meetingDoc.exists()) {
-          throw new Error("Meeting not found.");
+        // ── DEBUG LOGGING ──────────────────────────────────────────────────
+        console.log("[WebRTC] roomId from URL:", meetingId);
+        console.log("[WebRTC] projectId from URL:", projectId);
+        console.log("[WebRTC] Querying Firestore: meetings WHERE meetingId ==", meetingId);
+
+        // Meetings are created with addDoc (auto Firestore doc ID) + a custom
+        // `meetingId` field (the short code like PPY13J used in the URL).
+        // We MUST query by field, not by doc ID.
+        const q = query(
+          collection(db, "meetings"),
+          where("meetingId", "==", meetingId)
+        );
+        const snap = await getDocs(q);
+
+        console.log("[WebRTC] Firestore query results — docs found:", snap.size);
+
+        if (snap.empty) {
+          console.error("[WebRTC] No meeting found with meetingId ==", meetingId);
+          throw new Error(`Meeting "${meetingId}" not found. Make sure you have the correct meeting code.`);
         }
 
-        const data = meetingDoc.data();
+        const meetingDocSnap = snap.docs[0];
+        const firestoreDocId = meetingDocSnap.id;
+        firestoreDocIdRef.current = firestoreDocId;
+        const data = meetingDocSnap.data();
+
+        console.log("[WebRTC] Firestore doc ID:", firestoreDocId);
+        console.log("[WebRTC] Meeting data:", JSON.stringify({ status: data.status, hasOffer: !!data.offer, hasAnswer: !!data.answer }));
+
+        // Decide role: if an offer already exists and it's not ours, we are receiver
         if (data.offer && data.offer.createdBy !== userId) {
-          await startAsReceiver(data.offer as { sdp: string; type: RTCSdpType });
+          console.log("[WebRTC] Role: RECEIVER — offer found from another user");
+          await startAsReceiver(data.offer as { sdp: string; type: RTCSdpType }, firestoreDocId);
         } else {
-          await startAsCaller();
+          console.log("[WebRTC] Role: CALLER — no offer found or offer is ours");
+          await startAsCaller(firestoreDocId);
         }
       } catch (err: any) {
         console.error("[WebRTC] Init error:", err);
@@ -424,7 +459,7 @@ export default function MeetingRoomPage() {
     return () => {
       cleanup(false);
     };
-  }, [meetingId, userId, startAsCaller, startAsReceiver, cleanup]);
+  }, [meetingId, projectId, userId, startAsCaller, startAsReceiver, cleanup]);
 
   // ── Leave call ─────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
