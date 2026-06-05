@@ -148,15 +148,36 @@ service cloud.firestore {
     // ─── meetings ─────────────────────────────────────────────────────────────
     match /meetings/{meetingDocId} {
       allow list: if isAuth();
-      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow get: if isAuth();
       allow create: if isAuth()
-        && request.resource.data.createdBy == request.auth.uid
-        && isMember(request.resource.data.projectId);
+        && isMember(request.resource.data.projectId)
+        && (
+          request.resource.data.hostId == request.auth.uid ||
+          request.resource.data.createdBy == request.auth.uid
+        );
       allow update: if isAuth() && isMember(resource.data.projectId);
       allow delete: if isAuth() && (
         isLeader(resource.data.projectId) ||
+        resource.data.hostId == request.auth.uid ||
         resource.data.createdBy == request.auth.uid
       );
+    }
+
+    // ─── meetingJoinRequests ──────────────────────────────────────────────────
+    match /meetingJoinRequests/{requestId} {
+      allow list, get: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuth();
+      allow delete: if isAuth();
+    }
+
+    // ─── meetingParticipants ──────────────────────────────────────────────────
+    match /meetingParticipants/{participantId} {
+      allow list, get: if isAuth();
+      allow create: if isAuth();
+      allow update: if isAuth();
+      allow delete: if isAuth();
     }
 
     // ─── meetingHistory ───────────────────────────────────────────────────────
