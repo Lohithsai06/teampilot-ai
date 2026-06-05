@@ -661,7 +661,27 @@ export default function MeetingsPage() {
   // ── End a meeting (host only) ─────────────────────────────────────────────
   const handleEndMeeting = useCallback(async (docId: string) => {
     try {
-      await updateDoc(doc(db, "meetings", docId), { status: "ended" });
+      await updateDoc(doc(db, "meetings", docId), {
+        status: "ended",
+        offer: null,
+        answer: null,
+        callerMicEnabled: null,
+        callerCamEnabled: null,
+        receiverMicEnabled: null,
+        receiverCamEnabled: null,
+      });
+
+      const deleteCollection = async (collName: string, field: string, value: string) => {
+        const q = query(collection(db, collName), where(field, "==", value));
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      };
+
+      await deleteCollection("meetingCandidates", "meetingId", docId);
+      await deleteCollection("meetingParticipants", "meetingId", docId);
+      await deleteCollection("meetingJoinRequests", "meetingId", docId);
+
+      console.log("[Meeting] Ended meeting and cleaned up signaling:", docId);
     } catch (err) {
       console.error("Failed to end meeting:", err);
     }

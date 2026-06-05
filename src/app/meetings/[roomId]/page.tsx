@@ -401,35 +401,15 @@ function HostApprovalPanel({
 // ─── Participants Panel ───────────────────────────────────────────────────────
 
 function ParticipantsPanel({
-  meetingDocId,
+  participants,
   hostId,
   currentUserId,
 }: {
-  meetingDocId: string;
+  participants: Participant[];
   hostId: string;
   currentUserId: string;
 }) {
-  const [participants, setParticipants] = useState<Participant[]>([]);
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!meetingDocId) return;
-
-    const q = query(
-      collection(db, "meetingParticipants"),
-      where("meetingId", "==", meetingDocId)
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const data: Participant[] = snap.docs.map((d) => ({
-        docId: d.id,
-        ...(d.data() as Omit<Participant, "docId">),
-      }));
-      setParticipants(data);
-    });
-
-    return () => unsub();
-  }, [meetingDocId]);
 
   return (
     <>
@@ -546,12 +526,26 @@ export default function MeetingRoomPage() {
   const joinedAtRef = useRef<number>(Date.now());
   const hasStartedRef = useRef(false);
   const participantDocIdRef = useRef<string>("");
+  const sessionIdRef = useRef<string>("");
+  const roleRef = useRef<CallRole>(null);
+  const isRecoveringRef = useRef<boolean>(false);
+  const handleConnectionFailureRef = useRef<() => Promise<void>>(async () => {});
 
   // ── State ───────────────────────────────────────────────────────────────────
   const [entryStatus, setEntryStatus] = useState<EntryStatus>("checking");
   const [connState, setConnState] = useState<ConnState>("idle");
   const [error, setError] = useState<ErrorInfo | null>(null);
-  const [role, setRole] = useState<CallRole>(null);
+  const [role, setRoleState] = useState<CallRole>(null);
+  const setRole = (newRole: CallRole) => {
+    setRoleState(newRole);
+    roleRef.current = newRole;
+  };
+  const [sessionId, setSessionId] = useState<string>("");
+  const [meetingStartedAt, setMeetingStartedAt] = useState<number | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [meetingSessionId, setMeetingSessionId] = useState<string>("");
+  const [offerSessionId, setOfferSessionId] = useState<string>("");
+  const [answerSessionId, setAnswerSessionId] = useState<string>("");
   const [micEnabled, setMicEnabled] = useState(true);
   const [camEnabled, setCamEnabled] = useState(true);
   const [duration, setDuration] = useState(0);
@@ -604,29 +598,54 @@ export default function MeetingRoomPage() {
     []
   );
 
+  // ── Listen to meeting participants ──────────────────────────────────────────
+  useEffect(() => {
+    if (!meetingDocId) return;
+
+    const q = query(
+      collection(db, "meetingParticipants"),
+      where("meetingId", "==", meetingDocId)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const data: Participant[] = snap.docs.map((d) => ({
+        docId: d.id,
+        ...(d.data() as Omit<Participant, "docId">),
+      }));
+      setParticipants(data);
+    });
+
+    return () => unsub();
+  }, [meetingDocId]);
+
   // ── Duration timer ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (connState !== "connected") return;
-    const id = setInterval(() => setDuration((d) => d + 1), 1000);
+    if (!meetingStartedAt) return;
+    const id = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - meetingStartedAt) / 1000);
+      setDuration(elapsed >= 0 ? elapsed : 0);
+    }, 1000);
     return () => clearInterval(id);
-  }, [connState]);
+  }, [meetingStartedAt]);
 
   // ── Cleanup helper ──────────────────────────────────────────────────────────
   const cleanup = useCallback(
-    async (saveHistory = true) => {
-      addLog("Cleanup: stopping all resources", "info");
+    async (saveHistory = true, keepLocalStream = false) => {
+      addLog(`Cleanup: stopping resources (keepLocalStream=${keepLocalStream})`, "info");
       unsubscribersRef.current.forEach((unsub) => unsub());
       unsubscribersRef.current = [];
 
-      if (localStreamRef.current) {
+      if (!keepLocalStream && localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => {
           t.stop();
           addLog(`Stopped track: ${t.kind}`, "info");
         });
         localStreamRef.current = null;
+        setLocalTrackCount(0);
+        setLocalStreamReady(false);
       }
 
-      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      if (!keepLocalStream && localVideoRef.current) localVideoRef.current.srcObject = null;
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
       if (pcRef.current) {
@@ -904,6 +923,7 @@ export default function MeetingRoomPage() {
           setConnState("disconnected");
         } else if (state === "failed") {
           setConnState("failed");
+          handleConnectionFailureRef.current();
         }
       };
 
@@ -935,6 +955,7 @@ export default function MeetingRoomPage() {
             "ICE FAILED — peers cannot reach each other. Check network/firewall.",
             "error"
           );
+          handleConnectionFailureRef.current();
         }
       };
 
@@ -953,7 +974,7 @@ export default function MeetingRoomPage() {
 
   // ── ICE candidate writer ────────────────────────────────────────────────────
   const writeIceCandidate = useCallback(
-    async (candidate: RTCIceCandidate, type: "caller" | "receiver") => {
+    async (candidate: RTCIceCandidate, type: "caller" | "receiver", activeSessionId: string) => {
       try {
         await addDoc(collection(db, "meetingCandidates"), {
           meetingId: meetingDocId,
@@ -961,8 +982,9 @@ export default function MeetingRoomPage() {
           type,
           candidate: candidate.toJSON(),
           createdAt: serverTimestamp(),
+          sessionId: activeSessionId,
         });
-        addLog(`ICE candidate written to Firestore: type=${type}`, "info");
+        addLog(`ICE candidate written to Firestore: type=${type} session=${activeSessionId}`, "info");
       } catch (e: any) {
         addLog(`Failed to write ICE candidate: ${e?.message}`, "error");
       }
@@ -974,13 +996,15 @@ export default function MeetingRoomPage() {
   const listenForIceCandidates = useCallback(
     (
       listenForType: "caller" | "receiver",
-      myRole: "caller" | "receiver"
+      myRole: "caller" | "receiver",
+      activeSessionId: string
     ) => {
-      addLog(`Listening for ICE candidates (type=${listenForType})`, "info");
+      addLog(`Listening for ICE candidates (type=${listenForType}, session=${activeSessionId})`, "info");
       const q = query(
         collection(db, "meetingCandidates"),
         where("meetingId", "==", meetingDocId),
-        where("type", "==", listenForType)
+        where("type", "==", listenForType),
+        where("sessionId", "==", activeSessionId)
       );
       const unsub = onSnapshot(q, (snap) => {
         snap.docChanges().forEach((change) => {
@@ -1037,15 +1061,19 @@ export default function MeetingRoomPage() {
   );
 
   // ── CALLER FLOW ─────────────────────────────────────────────────────────────
-  const startAsCaller = useCallback(async () => {
+  const startAsCaller = useCallback(async (forcedSessionId?: string) => {
     try {
-      addLog("=== CALLER FLOW STARTED ===", "info");
-      const stream = await getLocalMedia();
+      const activeSessionId = forcedSessionId || crypto.randomUUID();
+      setSessionId(activeSessionId);
+      sessionIdRef.current = activeSessionId;
+      addLog(`=== CALLER FLOW STARTED (Session=${activeSessionId}) ===`, "info");
+      
+      const stream = localStreamRef.current || await getLocalMedia();
       setConnState("creating-offer");
 
       const pc = createPC(
         stream,
-        (candidate) => writeIceCandidate(candidate, "caller"),
+        (candidate) => writeIceCandidate(candidate, "caller", activeSessionId),
         "caller"
       );
 
@@ -1062,59 +1090,33 @@ export default function MeetingRoomPage() {
         type: offer.type,
         createdBy: userId,
         callerName: userName,
+        sessionId: activeSessionId,
       };
       addLog(`Writing offer to Firestore doc: ${meetingDocId}`, "info");
-      await updateDoc(doc(db, "meetings", meetingDocId), {
+      
+      const meetingRef = doc(db, "meetings", meetingDocId);
+      const meetingSnap = await getDoc(meetingRef);
+      const meetingData = meetingSnap.exists() ? meetingSnap.data() : {};
+      
+      const updates: any = {
         offer: offerData,
+        sessionId: activeSessionId,
         callerMicEnabled: micEnabled,
         callerCamEnabled: camEnabled,
-      });
+      };
+      
+      if (!meetingData.meetingStartedAt) {
+        updates.meetingStartedAt = Date.now();
+      }
+      
+      await updateDoc(meetingRef, updates);
       setOfferStatus("Created ✓");
       addLog("Offer written to Firestore ✓", "ok");
 
       setConnState("waiting");
       setRole("caller");
 
-      const meetingUnsub = onSnapshot(
-        doc(db, "meetings", meetingDocId),
-        async (snapshot) => {
-          if (!snapshot.exists() || !pcRef.current) return;
-          const data = snapshot.data();
-
-          if (data?.answer && pcRef.current.signalingState !== "stable") {
-            addLog(
-              "Answer received from Firestore! Setting remote description…",
-              "ok"
-            );
-            if (data.answer.receiverName) setRemoteName(data.answer.receiverName);
-            try {
-              await pcRef.current.setRemoteDescription(
-                new RTCSessionDescription(data.answer)
-              );
-              setAnswerStatus("Received ✓");
-              setConnState("connecting");
-              addLog(
-                `setRemoteDescription (answer) done. Signaling state: ${pcRef.current.signalingState}`,
-                "ok"
-              );
-            } catch (e: any) {
-              addLog(
-                `setRemoteDescription (answer) error: ${e?.message}`,
-                "error"
-              );
-            }
-          }
-
-          // Sync remote media states
-          if (data?.receiverMicEnabled !== undefined)
-            setRemoteMicEnabled(data.receiverMicEnabled);
-          if (data?.receiverCamEnabled !== undefined)
-            setRemoteCamEnabled(data.receiverCamEnabled);
-        }
-      );
-      unsubscribersRef.current.push(meetingUnsub);
-
-      listenForIceCandidates("receiver", "caller");
+      listenForIceCandidates("receiver", "caller", activeSessionId);
     } catch (err: any) {
       addLog(`Caller setup error: ${err?.message}`, "error");
       setError({
@@ -1144,17 +1146,22 @@ export default function MeetingRoomPage() {
       sdp: string;
       type: RTCSdpType;
       callerName?: string;
+      sessionId: string;
     }) => {
       try {
-        addLog("=== RECEIVER FLOW STARTED ===", "info");
+        const activeSessionId = offerData.sessionId;
+        setSessionId(activeSessionId);
+        sessionIdRef.current = activeSessionId;
+        addLog(`=== RECEIVER FLOW STARTED (Session=${activeSessionId}) ===`, "info");
+        
         if (offerData.callerName) setRemoteName(offerData.callerName);
 
-        const stream = await getLocalMedia();
+        const stream = localStreamRef.current || await getLocalMedia();
         setOfferStatus("Received ✓");
 
         const pc = createPC(
           stream,
-          (candidate) => writeIceCandidate(candidate, "receiver"),
+          (candidate) => writeIceCandidate(candidate, "receiver", activeSessionId),
           "receiver"
         );
 
@@ -1178,6 +1185,7 @@ export default function MeetingRoomPage() {
           type: answer.type,
           createdBy: userId,
           receiverName: userName,
+          sessionId: activeSessionId,
         };
         addLog(
           `Writing answer to Firestore doc: ${meetingDocId}`,
@@ -1194,7 +1202,7 @@ export default function MeetingRoomPage() {
         setConnState("connecting");
         setRole("receiver");
 
-        listenForIceCandidates("caller", "receiver");
+        listenForIceCandidates("caller", "receiver", activeSessionId);
       } catch (err: any) {
         addLog(`Receiver setup error: ${err?.message}`, "error");
         setError({
@@ -1368,13 +1376,46 @@ export default function MeetingRoomPage() {
         addLog(`WebRTC INIT — role check on doc: ${meetingDocId}`, "info");
         addLog(`userId: ${userId} | userName: ${userName}`, "info");
 
-        // Top-level snapshot listener for media state sync
-        const mediaStateUnsub = onSnapshot(
+        // Top-level snapshot listener for media state sync, ends, answers, and restarts
+        const meetingUnsub = onSnapshot(
           doc(db, "meetings", meetingDocId),
-          (snapshot) => {
+          async (snapshot) => {
             if (!snapshot.exists()) return;
             const docData = snapshot.data();
-            const isCaller = docData.offer && docData.offer.createdBy === userId;
+
+            // 1. Check if host ended the meeting
+            if (docData.status === "ended") {
+              addLog("Meeting ended by host", "warn");
+              setError({
+                title: "Meeting Ended",
+                detail: "This meeting has been ended by the host.",
+                recoverable: false,
+              });
+              setConnState("disconnected");
+              cleanup(true);
+              
+              setTimeout(() => {
+                router.push(`/meetings?projectId=${projectId}`);
+              }, 3000);
+              return;
+            }
+
+            // Sync meetingStartedAt
+            if (docData.meetingStartedAt) {
+              const startedAtVal = docData.meetingStartedAt.seconds 
+                ? docData.meetingStartedAt.seconds * 1000 
+                : docData.meetingStartedAt;
+              setMeetingStartedAt(startedAtVal);
+            }
+
+            // Sync debug session IDs
+            setMeetingSessionId(docData.sessionId || "None");
+            setOfferSessionId(docData.offer?.sessionId || "None");
+            setAnswerSessionId(docData.answer?.sessionId || "None");
+
+            // 2. Sync media/name state based on roleRef
+            const currentRole = roleRef.current;
+            const isCaller = currentRole === "caller" || (docData.hostId === userId);
 
             if (isCaller) {
               if (docData.answer?.receiverName) setRemoteName(docData.answer.receiverName);
@@ -1389,9 +1430,46 @@ export default function MeetingRoomPage() {
               if (docData.callerCamEnabled !== undefined)
                 setRemoteCamEnabled(docData.callerCamEnabled);
             }
+
+            // 3. Handle caller flow: setting remote description when answer is received
+            if (isCaller && docData.answer && pcRef.current) {
+              const isCorrectSession = docData.answer.sessionId === sessionIdRef.current;
+              const isNotStable = pcRef.current.signalingState !== "stable";
+              if (isCorrectSession && isNotStable) {
+                addLog("Answer received from Firestore! Setting remote description…", "ok");
+                try {
+                  await pcRef.current.setRemoteDescription(
+                    new RTCSessionDescription(docData.answer)
+                  );
+                  setAnswerStatus("Received ✓");
+                  setConnState("connecting");
+                  addLog(
+                    `setRemoteDescription (answer) done. Signaling state: ${pcRef.current.signalingState}`,
+                    "ok"
+                  );
+                } catch (e: any) {
+                  addLog(
+                    `setRemoteDescription (answer) error: ${e?.message}`,
+                    "error"
+                  );
+                }
+              }
+            }
+
+            // 4. Handle receiver flow: start/restart when new offer is received
+            if (!isCaller && docData.offer) {
+              const offerSessionId = docData.offer.sessionId;
+              const currentSessionId = sessionIdRef.current;
+
+              if (offerSessionId && offerSessionId !== currentSessionId) {
+                addLog(`New offer session detected (${offerSessionId}). Recreating receiver connection...`, "info");
+                await cleanup(false, true);
+                await startAsReceiver(docData.offer);
+              }
+            }
           }
         );
-        unsubscribersRef.current.push(mediaStateUnsub);
+        unsubscribersRef.current.push(meetingUnsub);
 
         const meetingSnap = await getDoc(doc(db, "meetings", meetingDocId));
         if (!meetingSnap.exists()) {
@@ -1412,6 +1490,7 @@ export default function MeetingRoomPage() {
             sdp: string;
             type: RTCSdpType;
             callerName?: string;
+            sessionId: string;
           });
         } else {
           if (data.offer) {
@@ -1445,17 +1524,156 @@ export default function MeetingRoomPage() {
     meetingDocId,
     userId,
     userName,
+    projectId,
+    router,
     startAsCaller,
     startAsReceiver,
     cleanup,
     addLog,
   ]);
 
+  // ── Session signaling cleanup helper ─────────────────────────────────────────
+  const cleanupSessionSignaling = useCallback(async (sessionToClean: string) => {
+    if (!meetingDocId || !sessionToClean) return;
+    addLog(`Cleaning up signaling data for session: ${sessionToClean}`, "info");
+    try {
+      const meetingRef = doc(db, "meetings", meetingDocId);
+      const meetingSnap = await getDoc(meetingRef);
+      if (meetingSnap.exists()) {
+        const meetingData = meetingSnap.data();
+        const updates: any = {};
+        
+        if (meetingData.offer?.sessionId === sessionToClean) {
+          updates.offer = null;
+          updates.callerMicEnabled = null;
+          updates.callerCamEnabled = null;
+        }
+        if (meetingData.answer?.sessionId === sessionToClean) {
+          updates.answer = null;
+          updates.receiverMicEnabled = null;
+          updates.receiverCamEnabled = null;
+        }
+        if (meetingData.sessionId === sessionToClean) {
+          updates.sessionId = null;
+        }
+        
+        if (Object.keys(updates).length > 0) {
+          await updateDoc(meetingRef, updates);
+          addLog("Cleared offer/answer in meeting document", "ok");
+        }
+      }
+
+      const candidatesQ = query(
+        collection(db, "meetingCandidates"),
+        where("meetingId", "==", meetingDocId),
+        where("sessionId", "==", sessionToClean)
+      );
+      const candidatesSnap = await getDocs(candidatesQ);
+      await Promise.all(candidatesSnap.docs.map(d => deleteDoc(d.ref)));
+      addLog(`Deleted ${candidatesSnap.size} candidates for session`, "ok");
+    } catch (e: any) {
+      addLog(`Error during session signaling cleanup: ${e.message}`, "warn");
+    }
+  }, [meetingDocId, addLog]);
+
   // ── Leave call ──────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
+    const activeSession = sessionIdRef.current;
+    if (activeSession) {
+      await cleanupSessionSignaling(activeSession);
+    }
     await cleanup(true);
-    router.push("/meetings");
-  }, [cleanup, router]);
+    router.push(`/meetings?projectId=${projectId}`);
+  }, [cleanup, cleanupSessionSignaling, router, projectId]);
+
+  // ── End meeting (host only) ──────────────────────────────────────────────────
+  const handleEndMeeting = useCallback(async () => {
+    addLog("[Host] Ending meeting and cleaning up all temporary signaling...", "info");
+    try {
+      await updateDoc(doc(db, "meetings", meetingDocId), {
+        status: "ended",
+        offer: null,
+        answer: null,
+        callerMicEnabled: null,
+        callerCamEnabled: null,
+        receiverMicEnabled: null,
+        receiverCamEnabled: null,
+      });
+
+      const deleteCollection = async (collName: string, field: string, value: string) => {
+        const q = query(collection(db, collName), where(field, "==", value));
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      };
+
+      await deleteCollection("meetingCandidates", "meetingId", meetingDocId);
+      await deleteCollection("meetingParticipants", "meetingId", meetingDocId);
+      await deleteCollection("meetingJoinRequests", "meetingId", meetingDocId);
+
+      addLog("[Host] Meeting ended and Firestore cleanup complete.", "ok");
+    } catch (e: any) {
+      addLog(`Failed to end meeting: ${e.message}`, "error");
+    }
+  }, [meetingDocId, addLog]);
+
+  // ── Connection Recovery ─────────────────────────────────────────────────────
+  const handleConnectionFailure = useCallback(async () => {
+    if (isRecoveringRef.current) return;
+    isRecoveringRef.current = true;
+    addLog("Connection failure detected. Triggering automatic recovery...", "warn");
+    
+    if (pcRef.current) {
+      pcRef.current.onicecandidate = null;
+      pcRef.current.ontrack = null;
+      pcRef.current.onconnectionstatechange = null;
+      pcRef.current.onsignalingstatechange = null;
+      pcRef.current.oniceconnectionstatechange = null;
+      pcRef.current.onicegatheringstatechange = null;
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    setRemoteJoined(false);
+    setRemoteStreamReady(false);
+    setConnState("connecting");
+
+    const oldSessionId = sessionIdRef.current;
+    try {
+      if (roleRef.current === "caller") {
+        await updateDoc(doc(db, "meetings", meetingDocId), {
+          offer: null,
+          answer: null,
+          callerMicEnabled: null,
+          callerCamEnabled: null,
+          receiverMicEnabled: null,
+          receiverCamEnabled: null,
+        });
+      }
+      
+      if (oldSessionId) {
+        const q = query(
+          collection(db, "meetingCandidates"),
+          where("meetingId", "==", meetingDocId),
+          where("sessionId", "==", oldSessionId)
+        );
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      }
+    } catch (e: any) {
+      console.warn("Failed to clear old signaling session:", e);
+    }
+
+    if (roleRef.current === "caller") {
+      const newSessionId = crypto.randomUUID();
+      addLog(`[Recovery] Host starting new session: ${newSessionId}`, "info");
+      await startAsCaller(newSessionId);
+    } else {
+      addLog("[Recovery] Guest waiting for host to write new offer session...", "info");
+    }
+    
+    isRecoveringRef.current = false;
+  }, [meetingDocId, startAsCaller, addLog]);
+  handleConnectionFailureRef.current = handleConnectionFailure;
 
   // ── Sync local media status to Firestore ────────────────────────────────────
   const updateLocalMediaStatus = useCallback(
@@ -1659,7 +1877,7 @@ export default function MeetingRoomPage() {
           {/* Participants panel */}
           {meetingDocExists && (
             <ParticipantsPanel
-              meetingDocId={meetingDocId}
+              participants={participants}
               hostId={hostId}
               currentUserId={userId}
             />
@@ -1864,13 +2082,43 @@ export default function MeetingRoomPage() {
         {/* ── Debug Panel ─────────────────────────────────────────────────────── */}
         {showDebug && (
           <aside className="w-80 shrink-0 bg-zinc-950 border-l border-white/10 flex flex-col text-xs font-mono overflow-hidden">
-            {/* Status grid */}
+            {/* Sessions info */}
             <div className="p-3 border-b border-white/10 space-y-1">
               <div className="text-white/40 text-[10px] uppercase tracking-wider mb-2 flex items-center gap-1">
                 <Terminal className="h-3 w-3" /> WebRTC Debug
                 <span className="ml-auto text-white/30">
                   Role: {role || "—"} | Entry: {entryStatus}
                 </span>
+              </div>
+              
+              <div className="space-y-1.5 text-[10px] bg-black/20 p-2 rounded-lg border border-white/5">
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">Meeting ID</span>
+                  <span className="text-white truncate select-all" title={meetingDocId}>{meetingDocId}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">Session ID</span>
+                  <span className="text-white truncate select-all" title={sessionId}>{sessionId || "None"}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">Offer Session ID</span>
+                  <span className="text-white truncate select-all" title={offerSessionId}>{offerSessionId || "None"}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">Answer Session ID</span>
+                  <span className="text-white truncate select-all" title={answerSessionId}>{answerSessionId || "None"}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-white/30 text-[9px]">ICE Candidate Session ID</span>
+                  <span className="text-white truncate select-all" title={sessionId}>{sessionId || "None"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Status grid */}
+            <div className="p-3 border-b border-white/10 space-y-1">
+              <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">
+                Media Status
               </div>
               {[
                 ["Local Stream Ready", localStreamReady],
@@ -1903,8 +2151,8 @@ export default function MeetingRoomPage() {
 
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 pt-2 border-t border-white/5">
                 {[
-                  ["Offer", offerStatus],
-                  ["Answer", answerStatus],
+                  ["Offer Doc", offerStatus],
+                  ["Answer Doc", answerStatus],
                   ["Caller Gen ICE", callerIceGenCount],
                   ["Caller Recv ICE", callerIceRecvCount],
                   ["Caller Add ICE", callerIceAddCount],
@@ -1927,18 +2175,21 @@ export default function MeetingRoomPage() {
             {/* State indicators */}
             <div className="p-3 border-b border-white/10 space-y-1">
               <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">
-                States
+                States & Diagnostics
               </div>
               {[
                 ["PC Conn", pcConnState],
                 ["Signaling", pcSignalingState],
                 ["ICE Conn", pcIceConnState],
                 ["ICE Gather", pcIceGatherState],
+                ["Participants", participants.length],
+                ["Timer", formatDuration(duration)],
               ].map(([label, val]) => {
                 const isGood =
                   val === "connected" ||
                   val === "completed" ||
-                  val === "stable";
+                  val === "stable" ||
+                  (label === "Participants" && Number(val) > 0);
                 const isBad = val === "failed" || val === "closed";
                 return (
                   <div
@@ -1956,7 +2207,7 @@ export default function MeetingRoomPage() {
                           : "text-yellow-400"
                       )}
                     >
-                      {(val as string) || "—"}
+                      {String(val) || "—"}
                     </span>
                   </div>
                 );
@@ -2040,13 +2291,32 @@ export default function MeetingRoomPage() {
           )}
         </Button>
 
+        {entryStatus === "host" && (
+          <Button
+            onClick={handleEndMeeting}
+            title="End meeting for all"
+            className="h-12 w-12 sm:w-auto sm:px-6 rounded-full bg-red-600 hover:bg-red-700 text-white gap-2 transition-all duration-200 shrink-0 font-medium"
+          >
+            <PhoneOff className="h-5 w-5 animate-pulse" />
+            <span className="hidden sm:inline">End Meeting</span>
+          </Button>
+        )}
+
         <Button
           onClick={handleLeave}
+          variant={entryStatus === "host" ? "outline" : "default"}
           title="Leave call"
-          className="h-12 w-12 sm:w-auto sm:px-6 rounded-full bg-red-600 hover:bg-red-700 text-white gap-2 transition-all duration-200 shrink-0"
+          className={cn(
+            "h-12 w-12 sm:w-auto sm:px-6 rounded-full gap-2 transition-all duration-200 shrink-0 font-medium",
+            entryStatus === "host"
+              ? "border-white/20 text-white/70 hover:bg-white/10 hover:text-white"
+              : "bg-red-600 hover:bg-red-700 text-white"
+          )}
         >
-          <PhoneOff className="h-5 w-5" />
-          <span className="hidden sm:inline font-medium">Leave</span>
+          {entryStatus === "host" ? <X className="h-5 w-5" /> : <PhoneOff className="h-5 w-5" />}
+          <span className="hidden sm:inline">
+            {entryStatus === "host" ? "Leave Room Only" : "Leave"}
+          </span>
         </Button>
       </footer>
     </div>
