@@ -126,14 +126,7 @@ service cloud.firestore {
       allow delete: if isAuth() && isMember(resource.data.projectId);
     }
 
-    // ─── githubActivity ──────────────────────────────────────────────────────
-    match /githubActivity/{activityId} {
-      allow get: if isAuth() && isMember(resource.data.projectId);
-      allow list: if isAuth();
-      allow create: if isAuth() && isMember(request.resource.data.projectId);
-      allow update: if isAuth() && isMember(resource.data.projectId);
-      allow delete: if isAuth() && isMember(resource.data.projectId);
-    }
+    // githubActivity collection removed - activity is fetched live from GitHub
 
     // ─── githubReports ───────────────────────────────────────────────────────
     match /githubReports/{reportId} {

@@ -1,16 +1,9 @@
-import { useEffect, useState } from "react";
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  Timestamp,
-} from "firebase/firestore";
+import { useEffect, useState, useCallback } from "react";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 export interface GitHubActivity {
-  id: string;
-  projectId: string;
+  id: string; // sha
   authorName: string;
   authorId: string;
   branch: string;
@@ -21,97 +14,188 @@ export interface GitHubActivity {
   linesAdded: number;
   linesRemoved: number;
   filesChanged: number;
-  committedAt: Timestamp | null;
+  committedAt: string | Date | null;
 }
 
-/** Safely extract milliseconds from a Firestore Timestamp, Date, or raw object */
-function toMillis(value: unknown): number {
-  if (!value) return 0;
-  if (value instanceof Timestamp) return value.toMillis();
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === "string") return new Date(value).getTime();
-  if (typeof value === "object" && typeof (value as any).toMillis === "function") {
-    return (value as any).toMillis();
+function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
+  try {
+    url = url.replace(/\.git$/, "").trim();
+    if (url.includes("github.com/")) {
+      const parts = url.split("github.com/")[1].split("/");
+      if (parts.length >= 2) return { owner: parts[0], repo: parts[1] };
+    }
+    if (url.includes("github.com:")) {
+      const parts = url.split("github.com:")[1].split("/");
+      if (parts.length >= 2) return { owner: parts[0], repo: parts[1] };
+    }
+  } catch (err) {
+    console.error("[parseGitHubUrl] Error", err);
   }
-  if (typeof value === "object" && typeof (value as any).seconds === "number") {
-    return (value as any).seconds * 1000;
-  }
-  return 0;
+  return null;
 }
 
 export function useGitHubActivity(projectId: string | undefined) {
   const [activities, setActivities] = useState<GitHubActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [repoUrl, setRepoUrl] = useState<string | null>(null);
+  const [refreshCounter, setRefreshCounter] = useState(0);
 
+  const refresh = useCallback(() => setRefreshCounter((c) => c + 1), []);
+
+  // Listen for repository connection (only githubRepositories is used)
   useEffect(() => {
-    if (!projectId) {
+    if (!projectId) return;
+    const q = query(
+      collection(db, "githubRepositories"),
+      where("projectId", "==", projectId)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        if (snap.empty) {
+          setRepoUrl(null);
+        } else {
+          const d = snap.docs[0].data() as any;
+          setRepoUrl(d.repoUrl || null);
+        }
+      },
+      (err) => {
+        console.error('[useGitHubActivity] repo listener error', err);
+        setRepoUrl(null);
+      }
+    );
+    return () => unsub();
+  }, [projectId]);
+
+  // Fetch live GitHub data when repoUrl changes or refresh requested
+  useEffect(() => {
+    let mounted = true;
+    if (!repoUrl) {
       setActivities([]);
       setLoading(false);
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    const run = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const parsed = parseGitHubUrl(repoUrl);
+        if (!parsed) throw new Error("Invalid GitHub repository URL");
+        const { owner, repo } = parsed;
 
-    try {
-      const q = query(
-        collection(db, "githubActivity"),
-        where("projectId", "==", projectId)
-      );
+        const headers: Record<string, string> = {
+          Accept: "application/vnd.github.v3+json",
+        };
 
-      const unsub = onSnapshot(
-        q,
-        (snap) => {
-          const items = snap.docs
-            .map((doc) => {
-              const data = doc.data();
-              let parsedCommittedAt: Timestamp | null = null;
-              if (data.committedAt instanceof Timestamp) {
-                parsedCommittedAt = data.committedAt;
-              } else if (data.committedAt?.seconds) {
-                parsedCommittedAt = new Timestamp(data.committedAt.seconds, data.committedAt.nanoseconds ?? 0);
-              } else if (typeof data.committedAt === "string") {
-                parsedCommittedAt = Timestamp.fromDate(new Date(data.committedAt));
-              } else if (data.committedAt instanceof Date) {
-                parsedCommittedAt = Timestamp.fromDate(data.committedAt);
-              }
-
-              return {
-                id: doc.id,
-                projectId: data.projectId,
-                authorName: data.authorName || "Unknown",
-                authorId: data.authorId || "unknown",
-                branch: data.branch || "main",
-                commitMessage: data.commitMessage || "",
-                commitHash: data.commitHash || "",
-                commitUrl: data.commitUrl,
-                repository: data.repository,
-                linesAdded: data.linesAdded ?? 0,
-                linesRemoved: data.linesRemoved ?? 0,
-                filesChanged: data.filesChanged ?? 0,
-                committedAt: parsedCommittedAt,
-              } as GitHubActivity;
-            })
-            .sort((a, b) => toMillis(b.committedAt) - toMillis(a.committedAt)); // Newest first
-
-          setActivities(items);
-          setLoading(false);
-        },
-        (err) => {
-          console.error("[GitHub Activity] Error:", err);
-          setError("Failed to load activity data");
-          setLoading(false);
+        // Support optional GitHub token from localStorage to increase rate limits
+        try {
+          const storedToken = typeof window !== 'undefined' ? localStorage.getItem('github_token') : null;
+          if (storedToken) headers.Authorization = `token ${storedToken}`;
+        } catch (e) {
+          // ignore localStorage errors
         }
-      );
 
-      return () => unsub();
-    } catch (err) {
-      console.error("[GitHub Activity] Setup error:", err);
-      setError("Failed to set up activity listener");
-      setLoading(false);
-    }
-  }, [projectId]);
+        // Fetch commits (latest 20)
+        const commitsRes = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/commits?per_page=20`,
+          { headers }
+        );
 
-  return { activities, loading, error };
+        if (!commitsRes.ok) {
+          if (commitsRes.status === 404) throw new Error("Repository not found");
+          if (commitsRes.status === 403) {
+            // Try to surface reset time if available
+            const reset = commitsRes.headers?.get?.("x-ratelimit-reset");
+            if (reset) {
+              const resetTs = Number(reset) * 1000;
+              const resetDate = new Date(resetTs).toLocaleString();
+              throw new Error(`Rate limit exceeded. Resets at: ${resetDate}. Provide a GitHub token via localStorage key 'github_token' to increase limits.`);
+            }
+            throw new Error("Rate limit exceeded or access denied. Provide a GitHub token via localStorage key 'github_token' to increase limits.");
+          }
+          throw new Error("Failed to fetch commits");
+        }
+
+        const commits = await commitsRes.json();
+
+        // Fetch branches to get default branch info (best-effort)
+        let branches: any[] = [];
+        try {
+          const branchesRes = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`,
+            { headers }
+          );
+          if (branchesRes.ok) branches = await branchesRes.json();
+        } catch (err) {
+          console.warn('[useGitHubActivity] branches fetch failed', err);
+        }
+
+        // For each commit, fetch commit details to get stats
+        const detailed = await Promise.all(
+          commits.map(async (c: any) => {
+            try {
+              const detailRes = await fetch(
+                `https://api.github.com/repos/${owner}/${repo}/commits/${c.sha}`,
+                { headers }
+              );
+              if (!detailRes.ok) return { commit: c, detail: null };
+              const detail = await detailRes.json();
+              return { commit: c, detail };
+            } catch (err) {
+              return { commit: c, detail: null };
+            }
+          })
+        );
+
+        const defaultBranch = branches[0]?.name || "main";
+
+        const items: GitHubActivity[] = detailed.map(({ commit, detail }: any) => {
+          const stats = detail?.stats || { additions: 0, deletions: 0, total: 0 };
+          const filesChanged = Array.isArray(detail?.files) ? detail.files.length : 0;
+
+          return {
+            id: commit.sha,
+            authorName: commit.commit?.author?.name || commit.author?.login || "Unknown",
+            authorId: commit.author?.login || commit.commit?.author?.email || "unknown",
+            branch: defaultBranch,
+            commitMessage: commit.commit?.message?.split("\n")[0] || "",
+            commitHash: commit.sha,
+            commitUrl: commit.html_url,
+            repository: `${owner}/${repo}`,
+            linesAdded: stats.additions || 0,
+            linesRemoved: stats.deletions || 0,
+            filesChanged: filesChanged,
+            committedAt: commit.commit?.author?.date || null,
+          } as GitHubActivity;
+        });
+
+        // Sort newest first by date
+        items.sort((a, b) => {
+          const ta = a.committedAt ? new Date(a.committedAt).getTime() : 0;
+          const tb = b.committedAt ? new Date(b.committedAt).getTime() : 0;
+          return tb - ta;
+        });
+
+        if (!mounted) return;
+        setActivities(items);
+        setLoading(false);
+      } catch (err: any) {
+        console.error('[useGitHubActivity] Error fetching live data', err);
+        if (!mounted) return;
+        setError(err?.message || 'Failed to fetch GitHub data');
+        setActivities([]);
+        setLoading(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      mounted = false;
+    };
+  }, [repoUrl, refreshCounter]);
+
+  return { activities, loading, error, refresh };
 }

@@ -56,7 +56,6 @@ import {
 import { db } from "@/lib/firebase";
 import { useGitHubActivity } from "@/lib/useGitHubActivity";
 import { DevelopmentActivityTimeline } from "@/components/project/DevelopmentActivityTimeline";
-import { useGitHubSync } from "@/lib/useGitHubSync";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -237,7 +236,6 @@ function ConnectRepoForm({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { syncRepository, syncing: syncInProgress } = useGitHubSync();
 
   const handleSave = async () => {
     if (!form.repoUrl.trim() || !form.repoName.trim()) {
@@ -255,18 +253,6 @@ function ConnectRepoForm({
         connectedBy: userId,
         connectedAt: serverTimestamp(),
       });
-
-      // Trigger sync after repository is saved
-      const syncResult = await syncRepository(
-        projectId,
-        form.repoUrl.trim()
-      );
-
-      if (!syncResult.success) {
-        console.warn("[GitHub] Sync warning:", syncResult.error);
-        // Don't fail - repository is saved even if sync fails
-      }
-
       onConnected();
     } catch (err) {
       setError("Failed to save repository. Please try again.");
@@ -340,13 +326,13 @@ function ConnectRepoForm({
         </p>
       )}
 
-      <Button onClick={handleSave} disabled={saving || syncInProgress} className="w-full gap-2">
-        {saving || syncInProgress ? (
+      <Button onClick={handleSave} disabled={saving} className="w-full gap-2">
+        {saving ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <Link2 className="h-4 w-4" />
         )}
-        {saving ? "Connecting…" : syncInProgress ? "Syncing commits…" : "Save Repository"}
+        {saving ? "Connecting…" : "Save Repository"}
       </Button>
     </motion.div>
   );
@@ -357,7 +343,7 @@ function ConnectRepoForm({
 export default function GithubPage() {
   const { user } = useAuth();
   const { activeProject, activeProjectMembers } = useProject();
-  const { syncRepository, syncing: syncInProgress } = useGitHubSync();
+  // No commit writes to Firestore anymore; using live GitHub API
 
   const [repo, setRepo] = useState<GitHubRepo | null>(null);
   const [repoLoading, setRepoLoading] = useState(true);
@@ -381,59 +367,57 @@ export default function GithubPage() {
   const projectId = activeProject?.projectId;
 
   // ── GitHub Activity ──────────────────────────────────────────────────────────
-  const { activities: githubActivities, loading: githubLoading } =
+  const { activities: githubActivities, loading: githubLoading, refresh: refreshActivity } =
     useGitHubActivity(projectId);
 
-  // ── Fetch repo stats ──────────────────────────────────────────────────────────
+  // ── Fetch repo stats via GitHub API (no Firestore writes) ──────────────────────
   useEffect(() => {
     if (!repo) {
       setRepoStats(null);
       return;
     }
 
+    const parseGitHubUrl = (url: string) => {
+      try {
+        url = url.replace(/\.git$/, "").trim();
+        if (url.includes("github.com/")) {
+          const parts = url.split("github.com/")[1].split("/");
+          if (parts.length >= 2) return { owner: parts[0], repo: parts[1] };
+        }
+        if (url.includes("github.com:")) {
+          const parts = url.split("github.com:")[1].split("/");
+          if (parts.length >= 2) return { owner: parts[0], repo: parts[1] };
+        }
+      } catch (err) {
+        return null;
+      }
+      return null;
+    };
+
     const fetchStats = async () => {
       try {
-        const result = await syncRepository(projectId!, repo.repoUrl);
-        if (result.success) {
-          // Stats are automatically fetched with sync, but we can extract them
-          // from the API response if needed
-          console.log("[GitHub] Repo stats fetched");
-        }
+        const parsed = parseGitHubUrl(repo.repoUrl);
+        if (!parsed) return;
+        const headers = { Accept: "application/vnd.github.v3+json" };
+        const repoRes = await fetch(
+          `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
+          { headers }
+        );
+        if (!repoRes.ok) return;
+        const data = await repoRes.json();
+        setRepoStats({
+          stars: data.stargazers_count,
+          forks: data.forks_count,
+          language: data.language,
+          updatedAt: data.updated_at,
+        });
       } catch (err) {
         console.error("[GitHub] Error fetching stats:", err);
       }
     };
 
-    // Fetch stats on initial load, but don't auto-sync
-    // (user can manually click sync button)
+    fetchStats();
   }, [repo]);
-
-  // Auto-sync repository commits on page load if connected but timeline is empty
-  const autoSyncAttempted = React.useRef(false);
-
-  useEffect(() => {
-    autoSyncAttempted.current = false;
-  }, [projectId]);
-
-  useEffect(() => {
-    if (
-      projectId &&
-      repo &&
-      !githubLoading &&
-      githubActivities.length === 0 &&
-      !syncInProgress &&
-      !autoSyncAttempted.current
-    ) {
-      autoSyncAttempted.current = true;
-      syncRepository(projectId, repo.repoUrl).then((result) => {
-        if (result.success) {
-          console.log(`[GitHub] Auto-synced ${result.commitsAdded} commits`);
-        } else {
-          console.warn("[GitHub] Auto-sync warning/error:", result.error);
-        }
-      });
-    }
-  }, [projectId, repo, githubLoading, githubActivities.length, syncInProgress, syncRepository]);
 
   // ── 1. Repository ────────────────────────────────────────────────────────────
 
@@ -801,24 +785,42 @@ export default function GithubPage() {
                       size="sm"
                       className="gap-2 flex-1 sm:flex-none"
                       onClick={async () => {
-                        const result = await syncRepository(
-                          activeProject!.projectId,
-                          repo.repoUrl
-                        );
-                        if (result.success) {
-                          console.log(
-                            `[GitHub] Synced ${result.commitsAdded} commits`
-                          );
+                        try {
+                          // Re-fetch live GitHub commits
+                          refreshActivity();
+                          // Also refresh repo stats
+                          const url = repo.repoUrl.replace(/\.git$/, "");
+                          let parsed = null;
+                          if (url.includes("github.com/")) {
+                            const parts = url.split("github.com/")[1].split("/");
+                            parsed = { owner: parts[0], repo: parts[1] };
+                          } else if (url.includes("github.com:")) {
+                            const parts = url.split("github.com:")[1].split("/");
+                            parsed = { owner: parts[0], repo: parts[1] };
+                          }
+                          if (parsed) {
+                            const headers = { Accept: "application/vnd.github.v3+json" };
+                            const repoRes = await fetch(
+                              `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
+                              { headers }
+                            );
+                            if (repoRes.ok) {
+                              const data = await repoRes.json();
+                              setRepoStats({
+                                stars: data.stargazers_count,
+                                forks: data.forks_count,
+                                language: data.language,
+                                updatedAt: data.updated_at,
+                              });
+                            }
+                          }
+                        } catch (err) {
+                          console.error('[GitHub] Refresh error', err);
                         }
                       }}
-                      disabled={syncInProgress}
                     >
-                      {syncInProgress ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" />
-                      )}
-                      {syncInProgress ? "Syncing..." : "Sync Repository"}
+                      <RefreshCw className="h-4 w-4" />
+                      Refresh
                     </Button>
 
                     {/* Repo Stats */}
