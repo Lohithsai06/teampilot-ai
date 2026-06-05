@@ -166,28 +166,10 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // ─── WebRTC Signaling ─────────────────────────────────────────────────────
-    // callOffers — SDP offers written by the caller, keyed by meetingId
-    match /callOffers/{meetingId} {
-      allow read: if isAuth();
-      allow create, update: if isAuth()
-        && request.resource.data.createdBy == request.auth.uid;
-      allow delete: if isAuth();
-    }
-
-    // callAnswers — SDP answers written by the callee, keyed by meetingId
-    match /callAnswers/{meetingId} {
-      allow read: if isAuth();
-      allow create, update: if isAuth()
-        && request.resource.data.answeredBy == request.auth.uid;
-      allow delete: if isAuth();
-    }
-
-    // iceCandidates — trickle ICE candidates from both peers
-    match /iceCandidates/{candidateId} {
+    // ─── meetingCandidates ────────────────────────────────────────────────────
+    match /meetingCandidates/{candidateId} {
       allow read, list: if isAuth();
-      allow create: if isAuth()
-        && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if false;
     }
 

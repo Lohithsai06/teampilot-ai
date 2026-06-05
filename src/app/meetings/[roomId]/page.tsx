@@ -1,18 +1,13 @@
 "use client";
 
 /**
- * TeamPilot AI — WebRTC Video Call Room
+ * TeamPilot AI — WebRTC Video Call Room (Fireship Architecture)
  *
  * Architecture:
- *   - Browser A creates an RTCPeerConnection, captures media, creates an SDP offer,
- *     stores it in Firestore → callOffers/{meetingId}.
- *   - Browser B reads the offer, creates an RTCPeerConnection, captures media,
- *     creates an SDP answer, stores it in Firestore → callAnswers/{meetingId}.
- *   - Both sides write ICE candidates to Firestore → iceCandidates/{meetingId}_caller
- *     / iceCandidates/{meetingId}_callee and listen to each other's.
- *   - WebRTC negotiation completes; video/audio flows peer-to-peer.
- *
- * Firebase is used only for signaling. Video/audio never touches Firebase servers.
+ *   - Both Offer and Answer are stored directly in the `meetings/{meetingId}` document.
+ *   - ICE candidates are stored in a root collection `meetingCandidates`.
+ *   - Caller writes `offer` to the meeting doc, and ICE candidates to `meetingCandidates` with type="caller".
+ *   - Receiver reads `offer`, writes `answer` to the meeting doc, and ICE candidates with type="receiver".
  */
 
 import React, {
@@ -28,11 +23,9 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
@@ -43,13 +36,13 @@ import {
   Loader2,
   Mic,
   MicOff,
-  Phone,
   PhoneOff,
   User,
   Video,
   VideoOff,
   Wifi,
   WifiOff,
+  Terminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -63,7 +56,6 @@ const RTC_CONFIG: RTCConfiguration = {
       urls: [
         "stun:stun.l.google.com:19302",
         "stun:stun1.l.google.com:19302",
-        "stun:stun2.l.google.com:19302",
       ],
     },
   ],
@@ -71,7 +63,7 @@ const RTC_CONFIG: RTCConfiguration = {
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type CallRole = "caller" | "callee" | null;
+type CallRole = "caller" | "receiver" | null;
 type ConnState = "idle" | "requesting-media" | "creating-offer" | "waiting" | "connecting" | "connected" | "disconnected" | "failed" | "error";
 
 interface ErrorInfo {
@@ -142,6 +134,15 @@ export default function MeetingRoomPage() {
   const [duration, setDuration] = useState(0);
   const [remoteJoined, setRemoteJoined] = useState(false);
   const [localReady, setLocalReady] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+
+  // ── Debug State ────────────────────────────────────────────────────────────
+  const [offerStatus, setOfferStatus] = useState("None");
+  const [answerStatus, setAnswerStatus] = useState("None");
+  const [iceCandidateCount, setIceCandidateCount] = useState(0);
+  const [pcConnState, setPcConnState] = useState("");
+  const [pcSignalingState, setPcSignalingState] = useState("");
+  const [pcIceConnState, setPcIceConnState] = useState("");
 
   const userId = user?.uid || "";
   const userName = user?.displayName || user?.email?.split("@")[0] || "Anonymous";
@@ -155,24 +156,22 @@ export default function MeetingRoomPage() {
 
   // ── Cleanup helper ─────────────────────────────────────────────────────────
   const cleanup = useCallback(async (saveHistory = true) => {
-    // Unsubscribe all Firestore listeners
     unsubscribersRef.current.forEach((unsub) => unsub());
     unsubscribersRef.current = [];
 
-    // Stop all tracks
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
 
-    // Close peer connection
     if (pcRef.current) {
       pcRef.current.onicecandidate = null;
       pcRef.current.ontrack = null;
       pcRef.current.onconnectionstatechange = null;
+      pcRef.current.onsignalingstatechange = null;
+      pcRef.current.oniceconnectionstatechange = null;
       pcRef.current.close();
       pcRef.current = null;
     }
 
-    // Save meeting history
     if (saveHistory && userId) {
       try {
         const durationSecs = Math.floor((Date.now() - joinedAtRef.current) / 1000);
@@ -236,17 +235,15 @@ export default function MeetingRoomPage() {
     const pc = new RTCPeerConnection(RTC_CONFIG);
     pcRef.current = pc;
 
-    // Add local tracks
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-    // ICE candidate handler
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        setIceCandidateCount((prev) => prev + 1);
         onIceCandidate(event.candidate);
       }
     };
 
-    // Remote track handler
     pc.ontrack = (event) => {
       if (remoteVideoRef.current && event.streams[0]) {
         remoteVideoRef.current.srcObject = event.streams[0];
@@ -255,27 +252,38 @@ export default function MeetingRoomPage() {
       }
     };
 
-    // Connection state
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
+      setPcConnState(state);
       console.log("[WebRTC] Connection state:", state);
       if (state === "connected") setConnState("connected");
       if (state === "connecting") setConnState("connecting");
-      if (state === "disconnected") setConnState("disconnected");
+      if (state === "disconnected" || state === "closed") setConnState("disconnected");
       if (state === "failed") setConnState("failed");
-      if (state === "closed") setConnState("disconnected");
     };
+
+    pc.onsignalingstatechange = () => {
+      setPcSignalingState(pc.signalingState);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      setPcIceConnState(pc.iceConnectionState);
+    };
+
+    setPcConnState(pc.connectionState);
+    setPcSignalingState(pc.signalingState);
+    setPcIceConnState(pc.iceConnectionState);
 
     return pc;
   }, []);
 
   // ── ICE candidate writer ───────────────────────────────────────────────────
-  const writeIceCandidate = useCallback(async (candidate: RTCIceCandidate, candidateRole: string) => {
+  const writeIceCandidate = useCallback(async (candidate: RTCIceCandidate, type: "caller" | "receiver") => {
     try {
-      await addDoc(collection(db, "iceCandidates"), {
+      await addDoc(collection(db, "meetingCandidates"), {
         meetingId,
         userId,
-        role: candidateRole,
+        type,
         candidate: candidate.toJSON(),
         createdAt: serverTimestamp(),
       });
@@ -285,11 +293,11 @@ export default function MeetingRoomPage() {
   }, [meetingId, userId]);
 
   // ── ICE candidate reader ───────────────────────────────────────────────────
-  const listenForIceCandidates = useCallback((fromRole: string) => {
+  const listenForIceCandidates = useCallback((listenForType: "caller" | "receiver") => {
     const q = query(
-      collection(db, "iceCandidates"),
+      collection(db, "meetingCandidates"),
       where("meetingId", "==", meetingId),
-      where("role", "==", fromRole)
+      where("type", "==", listenForType)
     );
     const unsub = onSnapshot(q, (snap) => {
       snap.docChanges().forEach((change) => {
@@ -305,7 +313,7 @@ export default function MeetingRoomPage() {
     unsubscribersRef.current.push(unsub);
   }, [meetingId]);
 
-  // ── START CALL (Caller = first person to join) ─────────────────────────────
+  // ── CALLER FLOW ────────────────────────────────────────────────────────────
   const startAsCaller = useCallback(async () => {
     try {
       const stream = await getLocalMedia();
@@ -313,42 +321,32 @@ export default function MeetingRoomPage() {
 
       const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "caller"));
 
-      // Create SDP offer
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true,
-      });
+      const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-
-      // Store offer in Firestore
-      await setDoc(doc(db, "callOffers", meetingId), {
-        meetingId,
-        offer: { sdp: offer.sdp, type: offer.type },
-        createdBy: userId,
-        createdByName: userName,
-        createdAt: serverTimestamp(),
-      });
+      
+      const offerData = { sdp: offer.sdp, type: offer.type, createdBy: userId };
+      await updateDoc(doc(db, "meetings", meetingId), { offer: offerData });
+      setOfferStatus("Created");
 
       setConnState("waiting");
       setRole("caller");
 
-      // Listen for answer
-      const answerUnsub = onSnapshot(doc(db, "callAnswers", meetingId), async (snapshot) => {
+      const meetingUnsub = onSnapshot(doc(db, "meetings", meetingId), async (snapshot) => {
         if (!snapshot.exists() || !pcRef.current) return;
         const data = snapshot.data();
         if (data?.answer && pcRef.current.signalingState !== "stable") {
           try {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+            setAnswerStatus("Received");
             setConnState("connecting");
           } catch (e) {
             console.error("[WebRTC] setRemoteDescription (answer) error:", e);
           }
         }
       });
-      unsubscribersRef.current.push(answerUnsub);
+      unsubscribersRef.current.push(meetingUnsub);
 
-      // Listen for callee's ICE candidates
-      listenForIceCandidates("callee");
+      listenForIceCandidates("receiver");
     } catch (err: any) {
       console.error("[WebRTC] Caller setup error:", err);
       setError({
@@ -358,38 +356,31 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, userName, writeIceCandidate]);
+  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, writeIceCandidate]);
 
-  // ── JOIN CALL (Callee = second person to join) ─────────────────────────────
-  const startAsCallee = useCallback(async (offerData: { sdp: string; type: RTCSdpType }) => {
+  // ── RECEIVER FLOW ──────────────────────────────────────────────────────────
+  const startAsReceiver = useCallback(async (offerData: { sdp: string; type: RTCSdpType }) => {
     try {
       const stream = await getLocalMedia();
+      setOfferStatus("Received");
 
-      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "callee"));
+      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "receiver"));
 
-      // Set remote offer
       await pc.setRemoteDescription(new RTCSessionDescription(offerData));
 
-      // Create answer
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      // Store answer in Firestore
-      await setDoc(doc(db, "callAnswers", meetingId), {
-        meetingId,
-        answer: { sdp: answer.sdp, type: answer.type },
-        answeredBy: userId,
-        answeredByName: userName,
-        createdAt: serverTimestamp(),
-      });
+      const answerData = { sdp: answer.sdp, type: answer.type, createdBy: userId };
+      await updateDoc(doc(db, "meetings", meetingId), { answer: answerData });
+      setAnswerStatus("Created");
 
       setConnState("connecting");
-      setRole("callee");
+      setRole("receiver");
 
-      // Listen for caller's ICE candidates
       listenForIceCandidates("caller");
     } catch (err: any) {
-      console.error("[WebRTC] Callee setup error:", err);
+      console.error("[WebRTC] Receiver setup error:", err);
       setError({
         title: err?.friendlyTitle || "Join Failed",
         detail: err?.friendlyDetail || err?.message || "Could not join the call.",
@@ -397,29 +388,24 @@ export default function MeetingRoomPage() {
       });
       setConnState("error");
     }
-  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, userName, writeIceCandidate]);
+  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, writeIceCandidate]);
 
-  // ── Entry point: detect caller vs callee ──────────────────────────────────
+  // ── Entry point ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!meetingId || !userId || hasStartedRef.current) return;
     hasStartedRef.current = true;
 
     const init = async () => {
       try {
-        // Check if an offer already exists → this user is the callee
-        const offerSnap = await getDoc(doc(db, "callOffers", meetingId));
+        const meetingDoc = await getDoc(doc(db, "meetings", meetingId));
+        if (!meetingDoc.exists()) {
+          throw new Error("Meeting not found.");
+        }
 
-        if (offerSnap.exists()) {
-          const data = offerSnap.data();
-          // Don't join our own offer as callee (handles page refresh)
-          if (data.createdBy !== userId) {
-            await startAsCallee(data.offer as { sdp: string; type: RTCSdpType });
-          } else {
-            // Same user refreshed — re-enter as caller
-            await startAsCaller();
-          }
+        const data = meetingDoc.data();
+        if (data.offer && data.offer.createdBy !== userId) {
+          await startAsReceiver(data.offer as { sdp: string; type: RTCSdpType });
         } else {
-          // No offer exists → this user is the caller
           await startAsCaller();
         }
       } catch (err: any) {
@@ -436,9 +422,9 @@ export default function MeetingRoomPage() {
     init();
 
     return () => {
-      cleanup(false); // Component unmounting — don't save history (leave button handles that)
+      cleanup(false);
     };
-  }, [meetingId, userId, startAsCaller, startAsCallee, cleanup]);
+  }, [meetingId, userId, startAsCaller, startAsReceiver, cleanup]);
 
   // ── Leave call ─────────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
@@ -446,7 +432,7 @@ export default function MeetingRoomPage() {
     router.push("/meetings");
   }, [cleanup, router]);
 
-  // ── Toggle mic ─────────────────────────────────────────────────────────────
+  // ── Toggles ────────────────────────────────────────────────────────────────
   const toggleMic = useCallback(() => {
     if (!localStreamRef.current) return;
     const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -456,7 +442,6 @@ export default function MeetingRoomPage() {
     }
   }, []);
 
-  // ── Toggle camera ──────────────────────────────────────────────────────────
   const toggleCam = useCallback(() => {
     if (!localStreamRef.current) return;
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -476,10 +461,10 @@ export default function MeetingRoomPage() {
   const isLoading = ["idle", "requesting-media", "creating-offer", "connecting"].includes(connState);
 
   return (
-    <div className="h-screen w-screen bg-zinc-950 flex flex-col overflow-hidden select-none">
+    <div className="h-screen w-screen bg-zinc-950 flex flex-col overflow-hidden select-none relative">
 
       {/* ── Top Bar ──────────────────────────────────────────────────────────── */}
-      <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 bg-zinc-900/80 backdrop-blur-sm">
+      <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 bg-zinc-900/80 backdrop-blur-sm relative z-20">
         <div className="flex items-center gap-3 min-w-0">
           <Button
             variant="ghost"
@@ -513,17 +498,55 @@ export default function MeetingRoomPage() {
           </div>
         </div>
 
-        {/* Duration */}
-        {isConnected && (
-          <div className="flex items-center gap-1.5 text-sm font-mono text-white/60 shrink-0">
-            <Clock className="h-3.5 w-3.5" />
-            {formatDuration(duration)}
-          </div>
-        )}
+        <div className="flex items-center gap-4">
+          {/* Debug Panel Toggle */}
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => setShowDebug(!showDebug)}
+            className="text-white/40 hover:text-white hover:bg-white/10 h-8"
+            title="Toggle Debugging Panel"
+          >
+            <Terminal className="h-4 w-4" />
+          </Button>
+
+          {/* Duration */}
+          {isConnected && (
+            <div className="flex items-center gap-1.5 text-sm font-mono text-white/60 shrink-0">
+              <Clock className="h-3.5 w-3.5" />
+              {formatDuration(duration)}
+            </div>
+          )}
+        </div>
       </header>
 
+      {/* ── Debugging Panel ─────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showDebug && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-16 right-4 z-50 bg-black/80 backdrop-blur border border-white/20 p-4 rounded-xl shadow-2xl text-xs font-mono text-green-400 w-72"
+          >
+            <div className="flex justify-between items-center border-b border-white/20 pb-2 mb-2">
+              <span className="font-bold text-white">WebRTC Debug</span>
+              <span className="text-white/50">Role: {role || "None"}</span>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex justify-between"><span>Offer Status:</span><span className="text-white">{offerStatus}</span></div>
+              <div className="flex justify-between"><span>Answer Status:</span><span className="text-white">{answerStatus}</span></div>
+              <div className="flex justify-between"><span>ICE Cand Count:</span><span className="text-white">{iceCandidateCount}</span></div>
+              <div className="flex justify-between"><span>PC Conn State:</span><span className="text-white">{pcConnState || "None"}</span></div>
+              <div className="flex justify-between"><span>PC Signaling:</span><span className="text-white">{pcSignalingState || "None"}</span></div>
+              <div className="flex justify-between"><span>PC ICE Conn:</span><span className="text-white">{pcIceConnState || "None"}</span></div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Video Area ───────────────────────────────────────────────────────── */}
-      <main className="flex-1 relative overflow-hidden bg-zinc-900">
+      <main className="flex-1 relative overflow-hidden bg-zinc-900 z-10">
 
         {/* ── Remote video (full screen) ─────────────────────────────────────── */}
         <video
@@ -547,7 +570,6 @@ export default function MeetingRoomPage() {
               transition={{ duration: 0.3 }}
               className="absolute inset-0 flex flex-col items-center justify-center gap-5"
             >
-              {/* Avatar ring */}
               <div className="relative">
                 <div className="h-24 w-24 rounded-full bg-white/10 flex items-center justify-center ring-4 ring-white/10">
                   <User className="h-12 w-12 text-white/40" />
@@ -640,7 +662,7 @@ export default function MeetingRoomPage() {
                 "w-28 sm:w-36 md:w-44 aspect-video",
                 "rounded-xl overflow-hidden",
                 "border-2 border-white/20 shadow-2xl",
-                "bg-zinc-800"
+                "bg-zinc-800 z-20"
               )}
             >
               <video
@@ -656,7 +678,6 @@ export default function MeetingRoomPage() {
                   <VideoOff className="h-6 w-6 text-white/40" />
                 </div>
               )}
-              {/* "You" label */}
               <div className="absolute bottom-1 left-1 right-1">
                 <span className="text-[10px] text-white/70 bg-black/50 rounded px-1 py-0.5 truncate block text-center">
                   You {!micEnabled && "· Muted"}
@@ -666,9 +687,9 @@ export default function MeetingRoomPage() {
           )}
         </AnimatePresence>
 
-        {/* ── Remote name label (top-left of remote video) ──────────────────── */}
+        {/* ── Remote name label ─────────────────────────────────────────────── */}
         {remoteJoined && (
-          <div className="absolute top-4 left-4">
+          <div className="absolute top-4 left-4 z-20">
             <div className="flex items-center gap-1.5 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-1.5">
               <div className="h-2 w-2 rounded-full bg-green-400" />
               <span className="text-xs text-white font-medium">Participant</span>
@@ -678,9 +699,8 @@ export default function MeetingRoomPage() {
       </main>
 
       {/* ── Bottom Toolbar ───────────────────────────────────────────────────── */}
-      <footer className="shrink-0 flex items-center justify-center gap-3 px-4 py-4 bg-zinc-900/95 border-t border-white/10 backdrop-blur-sm">
+      <footer className="shrink-0 flex items-center justify-center gap-3 px-4 py-4 bg-zinc-900/95 border-t border-white/10 backdrop-blur-sm relative z-20">
 
-        {/* Mic toggle */}
         <Button
           onClick={toggleMic}
           variant="ghost"
@@ -697,7 +717,6 @@ export default function MeetingRoomPage() {
           {micEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
         </Button>
 
-        {/* Camera toggle */}
         <Button
           onClick={toggleCam}
           variant="ghost"
@@ -714,7 +733,6 @@ export default function MeetingRoomPage() {
           {camEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
         </Button>
 
-        {/* Leave */}
         <Button
           onClick={handleLeave}
           title="Leave call"
