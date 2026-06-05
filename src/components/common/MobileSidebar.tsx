@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Users,
   GitBranch,
+  Video,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/roadmap", label: "Roadmap", icon: Map },
   { href: "/kanban", label: "Kanban", icon: Kanban },
   { href: "/team-chat", label: "Team Chat", icon: MessageSquare },
+  { href: "/meetings", label: "Meetings", icon: Video },
   { href: "/team", label: "Team", icon: Users },
   { href: "/github", label: "GitHub", icon: GitBranch },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -64,7 +66,6 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
       transition={{ duration: 0.2, ease: "easeInOut" }}
       className="flex flex-col h-full w-full bg-background border-r"
     >
-      {/* Header */}
       <div className="p-4 border-b">
         <motion.span
           initial={{ opacity: 0 }}
@@ -76,7 +77,6 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
         </motion.span>
       </div>
 
-      {/* Navigation Items */}
       <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         {navItems.map((item, index) => {
           const isActive = pathname === item.href;
@@ -106,7 +106,6 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
         })}
       </nav>
 
-      {/* Logout Button */}
       <div className="p-2 border-t">
         <Button
           variant="ghost"

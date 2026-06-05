@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   addDoc,
   collection,
@@ -110,14 +110,8 @@ const roomIcons: Record<RoomType, React.ElementType> = {
 const emojiOptions = ["👍", "🔥", "✅", "🎯", "💡", "🚀"];
 const agentOptions = [
   { senderAgent: "PM Agent", message: "Sprint 2 Generated Successfully." },
-  {
-    senderAgent: "Architect Agent",
-    message: "Recommended Firebase + Next.js Architecture.",
-  },
-  {
-    senderAgent: "Vibe Coding Agent",
-    message: "Implementation direction is ready for review.",
-  },
+  { senderAgent: "Architect Agent", message: "Recommended Firebase + Next.js Architecture." },
+  { senderAgent: "Vibe Coding Agent", message: "Implementation direction is ready for review." },
 ];
 
 function getInitials(name: string) {
@@ -130,11 +124,8 @@ function getInitials(name: string) {
 }
 
 function formatMessageTime(timestamp: Timestamp | null) {
-  if (!timestamp) return "Sending";
-  return timestamp.toDate().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  if (!timestamp) return "Sending…";
+  return timestamp.toDate().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function formatLastSeen(timestamp: Timestamp | null) {
@@ -142,10 +133,7 @@ function formatLastSeen(timestamp: Timestamp | null) {
   const diff = Date.now() - timestamp.toMillis();
   if (diff < 60_000) return "Online";
   if (diff < 3_600_000) return `Last seen ${Math.max(1, Math.round(diff / 60_000))}m ago`;
-  return timestamp.toDate().toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
+  return timestamp.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function extractMentions(message: string, memberNames: string[]) {
@@ -239,20 +227,15 @@ export default function TeamChatPage() {
 
   useEffect(() => {
     if (!projectId) return;
-
     const roomsQuery = query(
       collection(db, "chatRooms"),
       where("projectId", "==", projectId),
       orderBy("roomOrder", "asc")
     );
-
     return onSnapshot(roomsQuery, (snapshot) => {
       const roomData = snapshot.docs.map((roomDoc) => {
         const data = roomDoc.data() as Omit<ChatRoom, "roomId"> & { roomId?: string };
-        return {
-          ...data,
-          roomId: data.roomId ?? roomDoc.id,
-        } as ChatRoom;
+        return { ...data, roomId: data.roomId ?? roomDoc.id } as ChatRoom;
       });
       setRooms(roomData);
       setSelectedRoomId((currentRoomId) => currentRoomId || roomData[0]?.roomId || "");
@@ -262,21 +245,16 @@ export default function TeamChatPage() {
 
   useEffect(() => {
     if (!projectId || !selectedRoomId) return;
-
     const messagesQuery = query(
       collection(db, "messages"),
       where("projectId", "==", projectId),
       where("roomId", "==", selectedRoomId),
       orderBy("createdAt", "asc")
     );
-
     return onSnapshot(messagesQuery, (snapshot) => {
       const messageData = snapshot.docs.map((messageDoc) => {
         const data = messageDoc.data() as Omit<ChatMessage, "id">;
-        return {
-          id: messageDoc.id,
-          ...data,
-        };
+        return { id: messageDoc.id, ...data };
       });
       setMessages(messageData);
       setLoadingMessages(false);
@@ -285,13 +263,11 @@ export default function TeamChatPage() {
 
   useEffect(() => {
     if (!projectId || !selectedRoomId || !userId) return;
-
     const typingQuery = query(
       collection(db, "typingStatus"),
       where("projectId", "==", projectId),
       where("roomId", "==", selectedRoomId)
     );
-
     return onSnapshot(typingQuery, (snapshot) => {
       const now = Date.now();
       const activeTypingUsers = snapshot.docs
@@ -311,12 +287,7 @@ export default function TeamChatPage() {
 
   useEffect(() => {
     if (!projectId) return;
-
-    const presenceQuery = query(
-      collection(db, "chatPresence"),
-      where("projectId", "==", projectId)
-    );
-
+    const presenceQuery = query(collection(db, "chatPresence"), where("projectId", "==", projectId));
     return onSnapshot(presenceQuery, (snapshot) => {
       const nextStatuses: Record<string, PresenceStatus> = {};
       snapshot.docs.forEach((presenceDoc) => {
@@ -330,28 +301,17 @@ export default function TeamChatPage() {
 
   useEffect(() => {
     if (!projectId || !selectedRoomId || !userId) return;
-
     const presenceRef = doc(db, "chatPresence", `${projectId}_${userId}`);
     const writePresence = (isOnline: boolean) =>
       setDoc(
         presenceRef,
-        {
-          projectId,
-          userId,
-          userName,
-          isOnline,
-          activeRoomId: selectedRoomId,
-          lastSeenAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
+        { projectId, userId, userName, isOnline, activeRoomId: selectedRoomId, lastSeenAt: serverTimestamp(), updatedAt: serverTimestamp() },
         { merge: true }
       ).catch((error) => console.error("Failed to update presence:", error));
-
     writePresence(true);
     const intervalId = window.setInterval(() => writePresence(true), 45_000);
     const handleVisibility = () => writePresence(document.visibilityState === "visible");
     document.addEventListener("visibilitychange", handleVisibility);
-
     return () => {
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibility);
@@ -370,9 +330,7 @@ export default function TeamChatPage() {
 
   const stopTyping = async () => {
     if (!activeProject || !selectedRoomId || !user) return;
-    await deleteDoc(doc(db, "typingStatus", `${activeProject.projectId}_${selectedRoomId}_${user.uid}`)).catch(
-      () => {}
-    );
+    await deleteDoc(doc(db, "typingStatus", `${activeProject.projectId}_${selectedRoomId}_${user.uid}`)).catch(() => {});
   };
 
   const markTyping = async () => {
@@ -384,7 +342,6 @@ export default function TeamChatPage() {
       userName: user.displayName || "Anonymous",
       updatedAt: serverTimestamp(),
     });
-
     if (typingTimeoutRef.current) window.clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(stopTyping, 2500);
   };
@@ -399,12 +356,7 @@ export default function TeamChatPage() {
     await addDoc(collection(db, "notifications"), {
       projectId: activeProject.projectId,
       roomId: selectedRoomId,
-      type,
-      title,
-      body,
-      recipientIds,
-      readBy: [],
-      createdAt: serverTimestamp(),
+      type, title, body, recipientIds, readBy: [], createdAt: serverTimestamp(),
     }).catch((error) => console.error("Failed to create notification:", error));
   };
 
@@ -431,10 +383,7 @@ export default function TeamChatPage() {
       senderAgent: agentMessage?.senderAgent ?? null,
       message: outgoingMessage,
       createdAt: serverTimestamp(),
-      edited: false,
-      editedAt: null,
-      mentions,
-      status: "sent",
+      edited: false, editedAt: null, mentions, status: "sent",
     });
 
     setMessageDraft("");
@@ -511,15 +460,12 @@ export default function TeamChatPage() {
             </h1>
             <p className="mt-1 text-muted-foreground">Realtime project communication</p>
           </div>
-
           <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed bg-muted/20 py-24 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
               <FolderKanban className="h-8 w-8 text-primary" />
             </div>
             <h3 className="mt-4 text-xl font-bold">No Project Selected</h3>
-            <p className="mt-1 max-w-[300px] text-muted-foreground">
-              Select a project to open its chat workspace.
-            </p>
+            <p className="mt-1 max-w-[300px] text-muted-foreground">Select a project to open its chat workspace.</p>
             <Link href="/projects" className="mt-5">
               <Button className="gap-2">
                 <FolderKanban className="h-4 w-4" />
@@ -532,14 +478,13 @@ export default function TeamChatPage() {
     );
   }
 
+  // ── Rooms Panel ────────────────────────────────────────────────────────────
   const roomsPanel = (
     <aside className="flex h-full flex-col border-r bg-background">
       <div className="border-b p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Project Chat
-            </p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Project Chat</p>
             <h2 className="line-clamp-1 font-semibold">{activeProject.projectName}</h2>
           </div>
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setRoomsOpen(false)}>
@@ -556,7 +501,6 @@ export default function TeamChatPage() {
           />
         </div>
       </div>
-
       <div className="flex-1 space-y-1 overflow-y-auto p-3">
         {loadingRooms ? (
           <div className="flex justify-center py-8">
@@ -569,10 +513,7 @@ export default function TeamChatPage() {
             return (
               <button
                 key={room.roomId}
-                onClick={() => {
-                  setSelectedRoomId(room.roomId);
-                  setRoomsOpen(false);
-                }}
+                onClick={() => { setSelectedRoomId(room.roomId); setRoomsOpen(false); }}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition",
                   "hover:bg-accent hover:text-accent-foreground",
@@ -599,13 +540,12 @@ export default function TeamChatPage() {
     </aside>
   );
 
+  // ── Members Panel ──────────────────────────────────────────────────────────
   const membersPanel = (
     <aside className="flex h-full flex-col border-l bg-background">
       <div className="flex items-center justify-between border-b p-4">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Project Members
-          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Project Members</p>
           <h2 className="font-semibold">{activeProjectMembers.length} teammates</h2>
         </div>
         <Button variant="ghost" size="icon" className="xl:hidden" onClick={() => setMembersOpen(false)}>
@@ -620,23 +560,14 @@ export default function TeamChatPage() {
         ) : (
           filteredMembers.map((member) => {
             const presence = presenceStatuses[member.userId];
-            const online = Boolean(
-              presence?.isOnline &&
-                presence.updatedAt &&
-                now - presence.updatedAt.toMillis() < 120_000
-            );
+            const online = Boolean(presence?.isOnline && presence.updatedAt && now - presence.updatedAt.toMillis() < 120_000);
             return (
               <div key={member.userId} className="flex items-center gap-3 rounded-lg p-2 transition hover:bg-muted/60">
                 <div className="relative">
                   <Avatar className="h-10 w-10">
                     <AvatarFallback>{getInitials(member.name)}</AvatarFallback>
                   </Avatar>
-                  <span
-                    className={cn(
-                      "absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background",
-                      online ? "bg-emerald-500" : "bg-muted-foreground"
-                    )}
-                  />
+                  <span className={cn("absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background", online ? "bg-emerald-500" : "bg-muted-foreground")} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -658,6 +589,7 @@ export default function TeamChatPage() {
     </aside>
   );
 
+  // ── Main render ────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
       <motion.div
@@ -668,7 +600,9 @@ export default function TeamChatPage() {
         <div className="grid h-full grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]">
           <div className="hidden lg:block">{roomsPanel}</div>
 
+          {/* ── Center: Chat Area ──────────────────────────────────────────── */}
           <section className="flex min-w-0 flex-col">
+            {/* Header */}
             <header className="flex items-center justify-between gap-3 border-b bg-background/95 p-3 sm:p-4">
               <div className="flex min-w-0 items-center gap-2">
                 <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setRoomsOpen(true)}>
@@ -692,6 +626,7 @@ export default function TeamChatPage() {
               </div>
             </header>
 
+            {/* Messages */}
             <div className="flex-1 overflow-y-auto bg-muted/20 px-3 py-4 sm:px-5">
               {loadingMessages ? (
                 <div className="flex h-full items-center justify-center">
@@ -708,97 +643,149 @@ export default function TeamChatPage() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {filteredMessages.map((message) => {
-                    const ownMessage = message.senderId === user?.uid && message.senderRole !== "ai";
-                    const canDelete = ownMessage || userRole === "leader";
-                    const status = getMessageStatus(message);
-                    return (
-                      <motion.div
-                        key={message.id}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="group flex gap-3"
-                      >
-                        <Avatar className={cn("mt-1 h-10 w-10", message.senderRole === "ai" && "bg-primary/10")}>
-                          <AvatarFallback>
-                            {message.senderRole === "ai" ? <Bot className="h-5 w-5" /> : getInitials(message.senderName)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1 rounded-lg bg-background px-4 py-3 shadow-sm">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold">{message.senderName}</span>
-                            <Badge variant={message.senderRole === "leader" ? "default" : "secondary"} className="text-[10px]">
-                              {message.senderRole === "ai" ? "AI Agent" : message.senderRole}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">{formatMessageTime(message.createdAt)}</span>
-                            {message.edited && <span className="text-xs text-muted-foreground">Edited</span>}
-                            {status && (
-                              <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
-                                <CheckCheck className="h-3.5 w-3.5" />
-                                {status}
-                              </span>
+                <div className="space-y-0.5">
+                  <AnimatePresence initial={false}>
+                    {filteredMessages.map((message, idx) => {
+                      const ownMessage = message.senderId === user?.uid && message.senderRole !== "ai";
+                      const canDelete = ownMessage || userRole === "leader";
+                      const status = getMessageStatus(message);
+
+                      // Grouping logic
+                      const prevMsg = filteredMessages[idx - 1];
+                      const nextMsg = filteredMessages[idx + 1];
+                      const isGroupStart = !prevMsg || prevMsg.senderId !== message.senderId || prevMsg.senderRole !== message.senderRole;
+                      const isGroupEnd = !nextMsg || nextMsg.senderId !== message.senderId || nextMsg.senderRole !== message.senderRole;
+
+                      return (
+                        <motion.div
+                          key={message.id}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.15 }}
+                          className={cn(
+                            "group flex items-end gap-2 px-1",
+                            ownMessage ? "flex-row-reverse" : "flex-row",
+                            isGroupStart ? "mt-4" : "mt-0.5"
+                          )}
+                        >
+                          {/* Avatar — left for others only */}
+                          {!ownMessage && (
+                            <div className="w-8 shrink-0 self-end mb-0.5">
+                              {isGroupEnd ? (
+                                <Avatar className={cn("h-8 w-8", message.senderRole === "ai" && "bg-violet-500/10")}>
+                                  <AvatarFallback className="text-xs font-semibold">
+                                    {message.senderRole === "ai"
+                                      ? <Bot className="h-4 w-4 text-violet-500" />
+                                      : getInitials(message.senderName)}
+                                  </AvatarFallback>
+                                </Avatar>
+                              ) : (
+                                <div className="h-8 w-8" />
+                              )}
+                            </div>
+                          )}
+
+                          {/* Content column */}
+                          <div className={cn("flex flex-col max-w-[72%] sm:max-w-[60%]", ownMessage ? "items-end" : "items-start")}>
+                            {/* Sender label — only for others, only at group start */}
+                            {!ownMessage && isGroupStart && (
+                              <div className="flex items-center gap-1.5 mb-1 px-1">
+                                <span className="text-xs font-semibold">{message.senderName}</span>
+                                <Badge
+                                  variant={message.senderRole === "leader" ? "default" : "secondary"}
+                                  className="text-[9px] px-1.5 py-0 h-4"
+                                >
+                                  {message.senderRole === "ai" ? "AI Agent" : message.senderRole}
+                                </Badge>
+                              </div>
                             )}
-                            {(ownMessage || canDelete) && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
-                                    <MoreVertical className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  {ownMessage && (
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        setEditingMessageId(message.id);
-                                        setEditingDraft(message.message);
-                                      }}
-                                    >
-                                      <Edit3 className="mr-2 h-4 w-4" />
-                                      Edit
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canDelete && (
-                                    <DropdownMenuItem className="text-destructive" onClick={() => deleteMessage(message.id)}>
-                                      <Trash2 className="mr-2 h-4 w-4" />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+
+                            {/* Bubble */}
+                            {editingMessageId === message.id ? (
+                              <div className="space-y-2 p-3 rounded-2xl border bg-background min-w-[240px] w-full">
+                                <Textarea
+                                  value={editingDraft}
+                                  onChange={(e) => setEditingDraft(e.target.value)}
+                                  className="min-h-[72px] resize-none"
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <Button variant="outline" size="sm" onClick={() => setEditingMessageId(null)}>Cancel</Button>
+                                  <Button size="sm" onClick={() => saveEdit(message.id)}>Save</Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div
+                                className={cn(
+                                  "px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words",
+                                  // Own messages: right side, blue gradient
+                                  ownMessage && "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-sm",
+                                  ownMessage && "rounded-2xl rounded-br-sm",
+                                  // AI agent messages
+                                  !ownMessage && message.senderRole === "ai" && "bg-violet-500/10 border border-violet-500/20 text-foreground rounded-2xl rounded-bl-sm",
+                                  // Other user messages
+                                  !ownMessage && message.senderRole !== "ai" && "bg-background border shadow-sm rounded-2xl rounded-bl-sm"
+                                )}
+                              >
+                                {renderMessageWithMentions(message.message)}
+                              </div>
+                            )}
+
+                            {/* Footer — timestamp, edited, seen, actions */}
+                            {isGroupEnd && (
+                              <div className={cn(
+                                "flex items-center gap-1.5 mt-1 px-1",
+                                ownMessage ? "flex-row-reverse" : "flex-row"
+                              )}>
+                                <span className="text-[10px] text-muted-foreground">{formatMessageTime(message.createdAt)}</span>
+                                {message.edited && <span className="text-[10px] text-muted-foreground">· edited</span>}
+                                {status && ownMessage && (
+                                  <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                    <CheckCheck className="h-3 w-3" />
+                                    {status}
+                                  </span>
+                                )}
+                                {(ownMessage || canDelete) && !editingMessageId && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-5 w-5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                      >
+                                        <MoreVertical className="h-3 w-3" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align={ownMessage ? "end" : "start"}>
+                                      {ownMessage && (
+                                        <DropdownMenuItem
+                                          onClick={() => { setEditingMessageId(message.id); setEditingDraft(message.message); }}
+                                        >
+                                          <Edit3 className="mr-2 h-4 w-4" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      )}
+                                      {canDelete && (
+                                        <DropdownMenuItem className="text-destructive" onClick={() => deleteMessage(message.id)}>
+                                          <Trash2 className="mr-2 h-4 w-4" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                              </div>
                             )}
                           </div>
-
-                          {editingMessageId === message.id ? (
-                            <div className="mt-3 space-y-2">
-                              <Textarea
-                                value={editingDraft}
-                                onChange={(event) => setEditingDraft(event.target.value)}
-                                className="min-h-[80px]"
-                              />
-                              <div className="flex justify-end gap-2">
-                                <Button variant="outline" size="sm" onClick={() => setEditingMessageId(null)}>
-                                  Cancel
-                                </Button>
-                                <Button size="sm" onClick={() => saveEdit(message.id)}>
-                                  Save
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">
-                              {renderMessageWithMentions(message.message)}
-                            </p>
-                          )}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
                   <div ref={messagesEndRef} />
                 </div>
               )}
             </div>
 
+            {/* Footer / Composer */}
             <footer className="border-t bg-background p-3 sm:p-4">
               {typingUsers.length > 0 && (
                 <p className="mb-2 text-xs text-muted-foreground">
@@ -874,6 +861,7 @@ export default function TeamChatPage() {
           <div className="hidden xl:block">{membersPanel}</div>
         </div>
 
+        {/* Mobile overlays */}
         {roomsOpen && (
           <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm lg:hidden">
             <div className="h-full w-[min(88vw,320px)] shadow-xl">{roomsPanel}</div>

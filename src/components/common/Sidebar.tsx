@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Users,
   GitBranch,
+  Video,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -36,6 +37,7 @@ const navItems = [
   { href: "/roadmap", label: "Roadmap", icon: Map },
   { href: "/kanban", label: "Kanban", icon: Kanban },
   { href: "/team-chat", label: "Team Chat", icon: MessageSquare },
+  { href: "/meetings", label: "Meetings", icon: Video },
   { href: "/team", label: "Team", icon: Users },
   { href: "/github", label: "GitHub", icon: GitBranch },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -139,6 +141,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             return <div key={item.href}>{linkContent}</div>;
           })}
         </nav>
+
         <div className="p-2 border-t">
           <Button
             variant="ghost"

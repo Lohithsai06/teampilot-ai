@@ -3,38 +3,33 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─── Helper functions ────────────────────────────────────────────────────
+    // ─── Helper functions ─────────────────────────────────────────────────────
 
-    // Is the request from a signed-in user?
     function isAuth() {
       return request.auth != null;
     }
 
-    // Is the signed-in user the leader of this project?
     function isLeader(projectId) {
       return isAuth() &&
         exists(/databases/$(database)/documents/projectMembers/$(projectId + "_" + request.auth.uid)) &&
         get(/databases/$(database)/documents/projectMembers/$(projectId + "_" + request.auth.uid)).data.role == "leader";
     }
 
-    // Is the signed-in user a member of this project?
     function isMember(projectId) {
       return isAuth() &&
         exists(/databases/$(database)/documents/projectMembers/$(projectId + "_" + request.auth.uid));
     }
 
-    // ─── projects ────────────────────────────────────────────────────────────
+    // ─── projects ─────────────────────────────────────────────────────────────
     match /projects/{projectId} {
       allow read: if isMember(projectId);
       allow list: if isAuth();
-      allow create: if isAuth()
-        && request.resource.data.leaderId == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.leaderId == request.auth.uid;
       allow update: if isMember(projectId);
       allow delete: if isLeader(projectId);
     }
 
-    // ─── projectMembers ──────────────────────────────────────────────────────
-    // Document ID format: {projectId}_{userId}
+    // ─── projectMembers ───────────────────────────────────────────────────────
     match /projectMembers/{memberDocId} {
       allow read: if isAuth();
       allow list: if isAuth();
@@ -42,12 +37,10 @@ service cloud.firestore {
         request.resource.data.userId == request.auth.uid ||
         isLeader(request.resource.data.projectId)
       );
-      allow update, delete: if isAuth() &&
-        isLeader(resource.data.projectId);
+      allow update, delete: if isAuth() && isLeader(resource.data.projectId);
     }
 
-    // ─── joinRequests ────────────────────────────────────────────────────────
-    // Document ID format: {projectId}_{userId}
+    // ─── joinRequests ─────────────────────────────────────────────────────────
     match /joinRequests/{requestId} {
       allow read: if isAuth() && (
         resource.data.userId == request.auth.uid ||
@@ -61,84 +54,56 @@ service cloud.firestore {
       allow update: if false;
     }
 
-    // ─── users ───────────────────────────────────────────────────────────────
+    // ─── users ────────────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read, write: if isAuth() && request.auth.uid == userId;
     }
 
-    // ─── roadmaps ──────────────────────────────────────────────────────────
-    // AI-generated project roadmaps. One active roadmap per project.
+    // ─── aiChats ──────────────────────────────────────────────────────────────
+    match /aiChats/{chatId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.userId == request.auth.uid
+        && isMember(request.resource.data.projectId);
+      allow update, delete: if false;
+    }
+
+    // ─── roadmaps ─────────────────────────────────────────────────────────────
     match /roadmaps/{roadmapId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
       allow create: if isAuth()
         && request.resource.data.generatedBy == request.auth.uid
         && isMember(request.resource.data.projectId);
-      allow update: if isAuth()
-        && isMember(resource.data.projectId);
-      allow delete: if isAuth()
-        && isLeader(resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isLeader(resource.data.projectId);
     }
 
-    // ─── roadmapPhases ────────────────────────────────────────────────────
-    // Individual phases within a roadmap.
+    // ─── roadmapPhases ────────────────────────────────────────────────────────
     match /roadmapPhases/{phaseId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
-      allow create: if isAuth()
-        && isMember(request.resource.data.projectId);
-      allow update: if isAuth()
-        && isMember(resource.data.projectId);
-      allow delete: if isAuth()
-        && isLeader(resource.data.projectId);
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isLeader(resource.data.projectId);
     }
 
-    // ─── aiChats ─────────────────────────────────────────────────────────────
-    // Chat messages for a project. Both user messages and AI assistant responses
-    // are written by the signed-in user (userId = request.auth.uid for both),
-    // distinguished by the `role` field ("user" | "assistant").
-    match /aiChats/{chatId} {
-      // Allow reading a single document if the reader is a project member
-      allow get: if isAuth() && isMember(resource.data.projectId);
-
-      // Allow listing/querying — used by onSnapshot realtime listeners.
-      // Any authenticated user can list; the query's where("projectId","==",...)
-      // filter ensures they only see messages for projects they belong to.
-      allow list: if isAuth();
-
-      // Any project member can create a chat message (user or AI response).
-      // The userId field must match the signed-in user for both user and
-      // assistant messages (the role field distinguishes them, not userId).
-      allow create: if isAuth()
-        && request.resource.data.userId == request.auth.uid
-        && isMember(request.resource.data.projectId);
-
-      // Messages are immutable
-      allow update, delete: if false;
-    }
-
-    // ─── githubRepositories ──────────────────────────────────────────────────
-    // Chat rooms belong to projects and are readable only by project members.
+    // ─── chatRooms ────────────────────────────────────────────────────────────
     match /chatRooms/{roomId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
-      allow create: if isAuth()
-        && isMember(request.resource.data.projectId);
-      allow update, delete: if isAuth()
-        && isLeader(resource.data.projectId);
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update, delete: if isAuth() && isLeader(resource.data.projectId);
     }
 
-    // Realtime project chat messages.
+    // ─── messages (team chat) ─────────────────────────────────────────────────
     match /messages/{messageId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
       allow create: if isAuth()
         && request.resource.data.senderId == request.auth.uid
-        && isMember(request.resource.data.projectId)
-        && (
-          request.resource.data.roomId != request.resource.data.projectId + "_announcements" ||
-          isLeader(request.resource.data.projectId)
-        );
+        && isMember(request.resource.data.projectId);
       allow update: if isAuth()
         && resource.data.senderId == request.auth.uid
         && isMember(resource.data.projectId)
@@ -149,7 +114,7 @@ service cloud.firestore {
         && (resource.data.senderId == request.auth.uid || isLeader(resource.data.projectId));
     }
 
-    // Ephemeral typing state per room.
+    // ─── typingStatus ─────────────────────────────────────────────────────────
     match /typingStatus/{typingId} {
       allow list: if isAuth();
       allow get: if isAuth() && isMember(resource.data.projectId);
@@ -161,7 +126,7 @@ service cloud.firestore {
         && isMember(resource.data.projectId);
     }
 
-    // Lightweight presence and read status for the chat workspace.
+    // ─── chatPresence ─────────────────────────────────────────────────────────
     match /chatPresence/{presenceId} {
       allow list: if isAuth();
       allow get: if isAuth() && isMember(resource.data.projectId);
@@ -171,18 +136,37 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Chat notifications are created by project members and read by project members.
+    // ─── notifications ────────────────────────────────────────────────────────
     match /notifications/{notificationId} {
       allow list: if isAuth();
       allow get: if isAuth() && isMember(resource.data.projectId);
-      allow create: if isAuth()
-        && isMember(request.resource.data.projectId);
-      allow update: if isAuth()
-        && isMember(resource.data.projectId);
-      allow delete: if isAuth()
-        && isLeader(resource.data.projectId);
+      allow create: if isAuth() && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && isLeader(resource.data.projectId);
     }
 
+    // ─── meetings ─────────────────────────────────────────────────────────────
+    match /meetings/{meetingDocId} {
+      allow list: if isAuth();
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow create: if isAuth()
+        && request.resource.data.createdBy == request.auth.uid
+        && isMember(request.resource.data.projectId);
+      allow update: if isAuth() && isMember(resource.data.projectId);
+      allow delete: if isAuth() && (
+        isLeader(resource.data.projectId) ||
+        resource.data.createdBy == request.auth.uid
+      );
+    }
+
+    // ─── meetingHistory ───────────────────────────────────────────────────────
+    match /meetingHistory/{histId} {
+      allow list, get: if isAuth();
+      allow create: if isAuth();
+      allow update, delete: if false;
+    }
+
+    // ─── githubRepositories ───────────────────────────────────────────────────
     match /githubRepositories/{repoId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
@@ -191,9 +175,7 @@ service cloud.firestore {
       allow delete: if isAuth() && isMember(resource.data.projectId);
     }
 
-    // githubActivity collection removed - activity is fetched live from GitHub
-
-    // ─── githubReports ───────────────────────────────────────────────────────
+    // ─── githubReports ────────────────────────────────────────────────────────
     match /githubReports/{reportId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
@@ -202,7 +184,7 @@ service cloud.firestore {
       allow delete: if isAuth() && isMember(resource.data.projectId);
     }
 
-    // ─── tasks ───────────────────────────────────────────────────────────────
+    // ─── tasks ────────────────────────────────────────────────────────────────
     match /tasks/{taskId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
@@ -211,7 +193,7 @@ service cloud.firestore {
       allow delete: if isAuth() && isMember(resource.data.projectId);
     }
 
-    // ─── agentSessions ───────────────────────────────────────────────────────
+    // ─── agentSessions ────────────────────────────────────────────────────────
     match /agentSessions/{sessionId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
@@ -220,7 +202,7 @@ service cloud.firestore {
       allow delete: if isAuth() && isMember(resource.data.projectId);
     }
 
-    // ─── generatedPrompts ────────────────────────────────────────────────────
+    // ─── generatedPrompts ─────────────────────────────────────────────────────
     match /generatedPrompts/{promptId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
