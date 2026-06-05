@@ -1,216 +1,729 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+/**
+ * TeamPilot AI — WebRTC Video Call Room
+ *
+ * Architecture:
+ *   - Browser A creates an RTCPeerConnection, captures media, creates an SDP offer,
+ *     stores it in Firestore → callOffers/{meetingId}.
+ *   - Browser B reads the offer, creates an RTCPeerConnection, captures media,
+ *     creates an SDP answer, stores it in Firestore → callAnswers/{meetingId}.
+ *   - Both sides write ICE candidates to Firestore → iceCandidates/{meetingId}_caller
+ *     / iceCandidates/{meetingId}_callee and listen to each other's.
+ *   - WebRTC negotiation completes; video/audio flows peer-to-peer.
+ *
+ * Firebase is used only for signaling. Video/audio never touches Firebase servers.
+ */
+
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
   serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
 } from "firebase/firestore";
-import { ArrowLeft, Loader2, Video, AlertCircle } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Clock,
+  Loader2,
+  Mic,
+  MicOff,
+  Phone,
+  PhoneOff,
+  User,
+  Video,
+  VideoOff,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
+import { cn } from "@/lib/utils";
 
-// ZegoCloud SDK — loaded dynamically to avoid SSR issues
-let ZegoUIKitPrebuilt: any = null;
+// ─── WebRTC STUN configuration ────────────────────────────────────────────────
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    {
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+      ],
+    },
+  ],
+  iceCandidatePoolSize: 10,
+};
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+type CallRole = "caller" | "callee" | null;
+type ConnState = "idle" | "requesting-media" | "creating-offer" | "waiting" | "connecting" | "connected" | "disconnected" | "failed" | "error";
+
+interface ErrorInfo {
+  title: string;
+  detail: string;
+  recoverable: boolean;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+const CONN_STATE_LABEL: Record<ConnState, string> = {
+  idle: "Initializing",
+  "requesting-media": "Requesting camera & mic…",
+  "creating-offer": "Setting up call…",
+  waiting: "Waiting for participant…",
+  connecting: "Connecting…",
+  connected: "Connected",
+  disconnected: "Disconnected",
+  failed: "Connection Failed",
+  error: "Error",
+};
+
+const CONN_STATE_COLOR: Record<ConnState, string> = {
+  idle: "text-white/50",
+  "requesting-media": "text-yellow-400",
+  "creating-offer": "text-yellow-400",
+  waiting: "text-blue-400",
+  connecting: "text-yellow-400",
+  connected: "text-green-400",
+  disconnected: "text-orange-400",
+  failed: "text-red-400",
+  error: "text-red-400",
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function MeetingRoomPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user } = useAuth();
 
-  const roomId = params?.roomId as string;
+  const meetingId = params?.roomId as string;
   const projectId = searchParams?.get("projectId") || "";
-  const meetingName = searchParams?.get("name") || "Team Meeting";
+  const meetingName = decodeURIComponent(searchParams?.get("name") || "Team Meeting");
 
-  const callContainerRef = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [errorMsg, setErrorMsg] = useState("");
-  const [joinedAt] = useState(() => Date.now());
-  const hasInitialized = useRef(false);
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const unsubscribersRef = useRef<Array<() => void>>([]);
+  const joinedAtRef = useRef<number>(Date.now());
+  const hasStartedRef = useRef(false);
 
-  const userId = user?.uid || `guest-${Math.random().toString(36).slice(2, 8)}`;
-  const userName = user?.displayName || user?.email?.split("@")[0] || "Guest";
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [connState, setConnState] = useState<ConnState>("idle");
+  const [error, setError] = useState<ErrorInfo | null>(null);
+  const [role, setRole] = useState<CallRole>(null);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [camEnabled, setCamEnabled] = useState(true);
+  const [duration, setDuration] = useState(0);
+  const [remoteJoined, setRemoteJoined] = useState(false);
+  const [localReady, setLocalReady] = useState(false);
 
+  const userId = user?.uid || "";
+  const userName = user?.displayName || user?.email?.split("@")[0] || "Anonymous";
+
+  // ── Duration timer ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!roomId || hasInitialized.current) return;
-    hasInitialized.current = true;
+    if (connState !== "connected") return;
+    const id = setInterval(() => setDuration((d) => d + 1), 1000);
+    return () => clearInterval(id);
+  }, [connState]);
 
-    const initCall = async () => {
+  // ── Cleanup helper ─────────────────────────────────────────────────────────
+  const cleanup = useCallback(async (saveHistory = true) => {
+    // Unsubscribe all Firestore listeners
+    unsubscribersRef.current.forEach((unsub) => unsub());
+    unsubscribersRef.current = [];
+
+    // Stop all tracks
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+
+    // Close peer connection
+    if (pcRef.current) {
+      pcRef.current.onicecandidate = null;
+      pcRef.current.ontrack = null;
+      pcRef.current.onconnectionstatechange = null;
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
+    // Save meeting history
+    if (saveHistory && userId) {
       try {
-        // Dynamic import — ZegoCloud requires browser env
-        const { ZegoUIKitPrebuilt: ZPC } = await import("@zegocloud/zego-uikit-prebuilt");
-        ZegoUIKitPrebuilt = ZPC;
-
-        const appID = parseInt(process.env.NEXT_PUBLIC_ZEGO_APP_ID || "0", 10);
-        const serverSecret = process.env.NEXT_PUBLIC_ZEGO_SERVER_SECRET || "";
-
-        if (!appID || !serverSecret) {
-          setErrorMsg("ZegoCloud credentials not configured. Please add NEXT_PUBLIC_ZEGO_APP_ID and NEXT_PUBLIC_ZEGO_SERVER_SECRET to your .env.local file.");
-          setStatus("error");
-          return;
-        }
-
-        const kitToken = ZegoUIKitPrebuilt.generateKitTokenForTest(
-          appID,
-          serverSecret,
-          `${projectId}_${roomId}`,  // Room ID scoped to project
-          userId,
-          userName
-        );
-
-        if (!callContainerRef.current) {
-          setStatus("error");
-          setErrorMsg("Video container not found.");
-          return;
-        }
-
-        const zp = ZegoUIKitPrebuilt.create(kitToken);
-
-        zp.joinRoom({
-          container: callContainerRef.current,
-          scenario: {
-            mode: ZegoUIKitPrebuilt.VideoConference,
-          },
-          showScreenSharingButton: true,
-          showPreJoinView: true,
-          showRoomDetailsButton: true,
-          showMyCameraToggleButton: true,
-          showMyMicrophoneToggleButton: true,
-          showAudioVideoSettingsButton: true,
-          showTextChat: true,
-          showUserList: true,
-          maxUsers: 50,
-          layout: "Auto",
-          showLayoutButton: true,
-          turnOnMicrophoneWhenJoining: true,
-          turnOnCameraWhenJoining: true,
-          showNonVideoUser: true,
-          showOnlyAudioUser: true,
-          useFrontFacingCamera: true,
-          onJoinRoom: async () => {
-            setStatus("ready");
-            console.log("[ZegoCloud] Joined room:", roomId);
-          },
-          onLeaveRoom: async () => {
-            // Save meeting history
-            try {
-              const duration = Math.floor((Date.now() - joinedAt) / 1000);
-              await addDoc(collection(db, "meetingHistory"), {
-                projectId,
-                meetingId: roomId,
-                participantId: userId,
-                participantName: userName,
-                duration,
-                endedAt: serverTimestamp(),
-              });
-            } catch (err) {
-              console.error("[ZegoCloud] Failed to save meeting history:", err);
-            }
-            router.push("/meetings");
-          },
-          onUserJoin: (users: any[]) => {
-            console.log("[ZegoCloud] Users joined:", users.map((u) => u.userName));
-          },
-          onUserLeave: (users: any[]) => {
-            console.log("[ZegoCloud] Users left:", users.map((u) => u.userName));
-          },
+        const durationSecs = Math.floor((Date.now() - joinedAtRef.current) / 1000);
+        await addDoc(collection(db, "meetingHistory"), {
+          projectId,
+          meetingId,
+          participantId: userId,
+          participantName: userName,
+          duration: durationSecs,
+          endedAt: serverTimestamp(),
         });
+      } catch (e) {
+        console.warn("[WebRTC] Could not save meeting history:", e);
+      }
+    }
+  }, [meetingId, projectId, userId, userName]);
 
-        setStatus("ready");
-      } catch (err: any) {
-        console.error("[ZegoCloud] Init error:", err);
-        setErrorMsg(err?.message || "Failed to initialize video call.");
-        setStatus("error");
+  // ── Media access ───────────────────────────────────────────────────────────
+  const getLocalMedia = useCallback(async (): Promise<MediaStream> => {
+    setConnState("requesting-media");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+      setLocalReady(true);
+      return stream;
+    } catch (err: any) {
+      const name = err?.name || "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        throw Object.assign(new Error("Camera/microphone permission denied"), {
+          friendlyTitle: "Permission Denied",
+          friendlyDetail: "Allow camera and microphone access in your browser settings, then reload.",
+          recoverable: false,
+        });
+      }
+      if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        throw Object.assign(new Error("No camera/microphone found"), {
+          friendlyTitle: "No Media Devices",
+          friendlyDetail: "No camera or microphone was detected. Please connect a device and try again.",
+          recoverable: false,
+        });
+      }
+      throw Object.assign(err, {
+        friendlyTitle: "Media Error",
+        friendlyDetail: err?.message || "Could not access your camera or microphone.",
+        recoverable: true,
+      });
+    }
+  }, []);
+
+  // ── Create RTCPeerConnection ───────────────────────────────────────────────
+  const createPC = useCallback((
+    stream: MediaStream,
+    onIceCandidate: (candidate: RTCIceCandidate) => void
+  ): RTCPeerConnection => {
+    const pc = new RTCPeerConnection(RTC_CONFIG);
+    pcRef.current = pc;
+
+    // Add local tracks
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+    // ICE candidate handler
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        onIceCandidate(event.candidate);
       }
     };
 
-    initCall();
-  }, [roomId, projectId, userId, userName, joinedAt, router]);
+    // Remote track handler
+    pc.ontrack = (event) => {
+      if (remoteVideoRef.current && event.streams[0]) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+        setRemoteJoined(true);
+        setConnState("connected");
+      }
+    };
+
+    // Connection state
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      console.log("[WebRTC] Connection state:", state);
+      if (state === "connected") setConnState("connected");
+      if (state === "connecting") setConnState("connecting");
+      if (state === "disconnected") setConnState("disconnected");
+      if (state === "failed") setConnState("failed");
+      if (state === "closed") setConnState("disconnected");
+    };
+
+    return pc;
+  }, []);
+
+  // ── ICE candidate writer ───────────────────────────────────────────────────
+  const writeIceCandidate = useCallback(async (candidate: RTCIceCandidate, candidateRole: string) => {
+    try {
+      await addDoc(collection(db, "iceCandidates"), {
+        meetingId,
+        userId,
+        role: candidateRole,
+        candidate: candidate.toJSON(),
+        createdAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.warn("[WebRTC] Failed to write ICE candidate:", e);
+    }
+  }, [meetingId, userId]);
+
+  // ── ICE candidate reader ───────────────────────────────────────────────────
+  const listenForIceCandidates = useCallback((fromRole: string) => {
+    const q = query(
+      collection(db, "iceCandidates"),
+      where("meetingId", "==", meetingId),
+      where("role", "==", fromRole)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      snap.docChanges().forEach((change) => {
+        if (change.type === "added" && pcRef.current) {
+          const data = change.doc.data();
+          const candidate = new RTCIceCandidate(data.candidate);
+          pcRef.current.addIceCandidate(candidate).catch((e) => {
+            console.warn("[WebRTC] addIceCandidate error:", e);
+          });
+        }
+      });
+    });
+    unsubscribersRef.current.push(unsub);
+  }, [meetingId]);
+
+  // ── START CALL (Caller = first person to join) ─────────────────────────────
+  const startAsCaller = useCallback(async () => {
+    try {
+      const stream = await getLocalMedia();
+      setConnState("creating-offer");
+
+      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "caller"));
+
+      // Create SDP offer
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+      await pc.setLocalDescription(offer);
+
+      // Store offer in Firestore
+      await setDoc(doc(db, "callOffers", meetingId), {
+        meetingId,
+        offer: { sdp: offer.sdp, type: offer.type },
+        createdBy: userId,
+        createdByName: userName,
+        createdAt: serverTimestamp(),
+      });
+
+      setConnState("waiting");
+      setRole("caller");
+
+      // Listen for answer
+      const answerUnsub = onSnapshot(doc(db, "callAnswers", meetingId), async (snapshot) => {
+        if (!snapshot.exists() || !pcRef.current) return;
+        const data = snapshot.data();
+        if (data?.answer && pcRef.current.signalingState !== "stable") {
+          try {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+            setConnState("connecting");
+          } catch (e) {
+            console.error("[WebRTC] setRemoteDescription (answer) error:", e);
+          }
+        }
+      });
+      unsubscribersRef.current.push(answerUnsub);
+
+      // Listen for callee's ICE candidates
+      listenForIceCandidates("callee");
+    } catch (err: any) {
+      console.error("[WebRTC] Caller setup error:", err);
+      setError({
+        title: err?.friendlyTitle || "Setup Failed",
+        detail: err?.friendlyDetail || err?.message || "Could not start the call.",
+        recoverable: err?.recoverable ?? true,
+      });
+      setConnState("error");
+    }
+  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, userName, writeIceCandidate]);
+
+  // ── JOIN CALL (Callee = second person to join) ─────────────────────────────
+  const startAsCallee = useCallback(async (offerData: { sdp: string; type: RTCSdpType }) => {
+    try {
+      const stream = await getLocalMedia();
+
+      const pc = createPC(stream, (candidate) => writeIceCandidate(candidate, "callee"));
+
+      // Set remote offer
+      await pc.setRemoteDescription(new RTCSessionDescription(offerData));
+
+      // Create answer
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      // Store answer in Firestore
+      await setDoc(doc(db, "callAnswers", meetingId), {
+        meetingId,
+        answer: { sdp: answer.sdp, type: answer.type },
+        answeredBy: userId,
+        answeredByName: userName,
+        createdAt: serverTimestamp(),
+      });
+
+      setConnState("connecting");
+      setRole("callee");
+
+      // Listen for caller's ICE candidates
+      listenForIceCandidates("caller");
+    } catch (err: any) {
+      console.error("[WebRTC] Callee setup error:", err);
+      setError({
+        title: err?.friendlyTitle || "Join Failed",
+        detail: err?.friendlyDetail || err?.message || "Could not join the call.",
+        recoverable: err?.recoverable ?? true,
+      });
+      setConnState("error");
+    }
+  }, [createPC, getLocalMedia, listenForIceCandidates, meetingId, userId, userName, writeIceCandidate]);
+
+  // ── Entry point: detect caller vs callee ──────────────────────────────────
+  useEffect(() => {
+    if (!meetingId || !userId || hasStartedRef.current) return;
+    hasStartedRef.current = true;
+
+    const init = async () => {
+      try {
+        // Check if an offer already exists → this user is the callee
+        const offerSnap = await getDoc(doc(db, "callOffers", meetingId));
+
+        if (offerSnap.exists()) {
+          const data = offerSnap.data();
+          // Don't join our own offer as callee (handles page refresh)
+          if (data.createdBy !== userId) {
+            await startAsCallee(data.offer as { sdp: string; type: RTCSdpType });
+          } else {
+            // Same user refreshed — re-enter as caller
+            await startAsCaller();
+          }
+        } else {
+          // No offer exists → this user is the caller
+          await startAsCaller();
+        }
+      } catch (err: any) {
+        console.error("[WebRTC] Init error:", err);
+        setError({
+          title: "Initialization Error",
+          detail: err?.message || "Could not initialize the call.",
+          recoverable: true,
+        });
+        setConnState("error");
+      }
+    };
+
+    init();
+
+    return () => {
+      cleanup(false); // Component unmounting — don't save history (leave button handles that)
+    };
+  }, [meetingId, userId, startAsCaller, startAsCallee, cleanup]);
+
+  // ── Leave call ─────────────────────────────────────────────────────────────
+  const handleLeave = useCallback(async () => {
+    await cleanup(true);
+    router.push("/meetings");
+  }, [cleanup, router]);
+
+  // ── Toggle mic ─────────────────────────────────────────────────────────────
+  const toggleMic = useCallback(() => {
+    if (!localStreamRef.current) return;
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setMicEnabled(audioTrack.enabled);
+    }
+  }, []);
+
+  // ── Toggle camera ──────────────────────────────────────────────────────────
+  const toggleCam = useCallback(() => {
+    if (!localStreamRef.current) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setCamEnabled(videoTrack.enabled);
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ── RENDER ────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  const isConnected = connState === "connected";
+  const isWaiting = connState === "waiting";
+  const isError = connState === "error" || connState === "failed";
+  const isLoading = ["idle", "requesting-media", "creating-offer", "connecting"].includes(connState);
 
   return (
-    <div className="h-screen w-screen bg-zinc-950 flex flex-col overflow-hidden">
-      {/* Top bar */}
-      <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-zinc-900/80 backdrop-blur-sm">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => router.push("/meetings")}
-          className="gap-2 text-white/70 hover:text-white hover:bg-white/10"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <div className="h-4 w-px bg-white/20" />
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-sm font-medium text-white">{meetingName}</span>
-          <span className="text-xs text-white/50">ID: {roomId}</span>
-        </div>
-      </div>
+    <div className="h-screen w-screen bg-zinc-950 flex flex-col overflow-hidden select-none">
 
-      {/* Video area */}
-      <div className="flex-1 relative overflow-hidden">
-        {/* Loading overlay */}
-        {status === "loading" && (
-          <motion.div
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-zinc-950 gap-4"
+      {/* ── Top Bar ──────────────────────────────────────────────────────────── */}
+      <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 bg-zinc-900/80 backdrop-blur-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push("/meetings")}
+            className="gap-2 text-white/60 hover:text-white hover:bg-white/10 shrink-0"
           >
-            <div className="h-16 w-16 rounded-2xl bg-primary/20 flex items-center justify-center">
-              <Video className="h-8 w-8 text-primary" />
-            </div>
-            <div className="text-center space-y-1">
-              <p className="text-white font-semibold">Joining {meetingName}</p>
-              <p className="text-white/50 text-sm">Setting up your video call…</p>
-            </div>
-            <Loader2 className="h-6 w-6 animate-spin text-primary/70" />
-          </motion.div>
-        )}
+            <ArrowLeft className="h-4 w-4" />
+            <span className="hidden sm:inline">Back</span>
+          </Button>
 
-        {/* Error state */}
-        {status === "error" && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-zinc-950 gap-4 p-8 text-center">
-            <div className="h-16 w-16 rounded-2xl bg-red-500/10 flex items-center justify-center">
-              <AlertCircle className="h-8 w-8 text-red-400" />
+          <div className="h-4 w-px bg-white/20 shrink-0" />
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-white truncate">{meetingName}</span>
+              <span className="hidden sm:inline text-xs text-white/40 font-mono shrink-0">
+                #{meetingId}
+              </span>
             </div>
-            <div className="space-y-2 max-w-md">
-              <p className="text-white font-semibold text-lg">Unable to Join Call</p>
-              <p className="text-white/60 text-sm leading-relaxed">{errorMsg}</p>
-              {errorMsg.includes("ZEGO") && (
-                <div className="mt-4 bg-white/5 rounded-xl p-4 text-left text-xs text-white/50 space-y-1">
-                  <p className="text-white/70 font-medium mb-2">To set up ZegoCloud:</p>
-                  <p>1. Create a free account at <span className="text-primary">console.zegocloud.com</span></p>
-                  <p>2. Create a project and get your App ID & Server Secret</p>
-                  <p>3. Add to <span className="font-mono bg-white/10 px-1 rounded">.env.local</span>:</p>
-                  <p className="font-mono bg-white/10 px-2 py-1 rounded mt-1">NEXT_PUBLIC_ZEGO_APP_ID=your_app_id</p>
-                  <p className="font-mono bg-white/10 px-2 py-1 rounded">NEXT_PUBLIC_ZEGO_SERVER_SECRET=your_secret</p>
-                </div>
-              )}
+            <div className={cn("flex items-center gap-1.5 text-xs mt-0.5", CONN_STATE_COLOR[connState])}>
+              {isConnected
+                ? <><div className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />{CONN_STATE_LABEL.connected}</>
+                : isWaiting
+                  ? <><Wifi className="h-3 w-3 animate-pulse" />{CONN_STATE_LABEL.waiting}</>
+                  : isError
+                    ? <><WifiOff className="h-3 w-3" />{CONN_STATE_LABEL[connState]}</>
+                    : <><Loader2 className="h-3 w-3 animate-spin" />{CONN_STATE_LABEL[connState]}</>
+              }
             </div>
-            <Button
-              onClick={() => router.push("/meetings")}
-              variant="outline"
-              className="mt-4 gap-2 border-white/20 text-white hover:bg-white/10"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Meetings
-            </Button>
+          </div>
+        </div>
+
+        {/* Duration */}
+        {isConnected && (
+          <div className="flex items-center gap-1.5 text-sm font-mono text-white/60 shrink-0">
+            <Clock className="h-3.5 w-3.5" />
+            {formatDuration(duration)}
           </div>
         )}
+      </header>
 
-        {/* ZegoCloud container */}
-        <div
-          ref={callContainerRef}
-          className="h-full w-full"
-          style={{ display: status === "error" ? "none" : "block" }}
+      {/* ── Video Area ───────────────────────────────────────────────────────── */}
+      <main className="flex-1 relative overflow-hidden bg-zinc-900">
+
+        {/* ── Remote video (full screen) ─────────────────────────────────────── */}
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className={cn(
+            "absolute inset-0 h-full w-full object-cover transition-opacity duration-500",
+            remoteJoined ? "opacity-100" : "opacity-0"
+          )}
         />
-      </div>
+
+        {/* ── Waiting / Loading overlay ──────────────────────────────────────── */}
+        <AnimatePresence>
+          {!remoteJoined && !isError && (
+            <motion.div
+              key="waiting-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-5"
+            >
+              {/* Avatar ring */}
+              <div className="relative">
+                <div className="h-24 w-24 rounded-full bg-white/10 flex items-center justify-center ring-4 ring-white/10">
+                  <User className="h-12 w-12 text-white/40" />
+                </div>
+                {(isLoading || isWaiting) && (
+                  <div className="absolute inset-0 rounded-full border-2 border-primary/60 animate-ping" />
+                )}
+              </div>
+
+              <div className="text-center space-y-1.5 px-4">
+                <p className="text-white font-semibold text-lg">
+                  {isWaiting ? "Waiting for participant…" : CONN_STATE_LABEL[connState]}
+                </p>
+                <p className="text-white/40 text-sm">
+                  {isWaiting
+                    ? "Share the meeting ID with your colleague to connect."
+                    : "Please wait while we set up your connection."}
+                </p>
+                {isWaiting && (
+                  <div className="mt-2 inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-4 py-2">
+                    <span className="text-white/50 text-xs">Meeting ID</span>
+                    <span className="text-white font-mono font-semibold tracking-wider">{meetingId}</span>
+                  </div>
+                )}
+              </div>
+
+              {(isLoading) && (
+                <Loader2 className="h-6 w-6 text-primary/60 animate-spin mt-2" />
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Error overlay ──────────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isError && error && (
+            <motion.div
+              key="error-overlay"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-8 text-center"
+            >
+              <div className="h-16 w-16 rounded-2xl bg-red-500/15 flex items-center justify-center">
+                <AlertCircle className="h-8 w-8 text-red-400" />
+              </div>
+              <div className="space-y-2 max-w-sm">
+                <p className="text-white font-semibold text-xl">{error.title}</p>
+                <p className="text-white/60 text-sm leading-relaxed">{error.detail}</p>
+              </div>
+              <div className="flex gap-3 mt-2">
+                {error.recoverable && (
+                  <Button
+                    onClick={() => {
+                      hasStartedRef.current = false;
+                      setError(null);
+                      setConnState("idle");
+                      setRemoteJoined(false);
+                      setLocalReady(false);
+                      setRole(null);
+                      window.location.reload();
+                    }}
+                    className="gap-2"
+                  >
+                    Retry
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() => router.push("/meetings")}
+                  className="gap-2 border-white/20 text-white hover:bg-white/10"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Local video (PiP bottom-right) ────────────────────────────────── */}
+        <AnimatePresence>
+          {localReady && (
+            <motion.div
+              key="local-pip"
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className={cn(
+                "absolute bottom-24 right-4 sm:bottom-28 sm:right-6",
+                "w-28 sm:w-36 md:w-44 aspect-video",
+                "rounded-xl overflow-hidden",
+                "border-2 border-white/20 shadow-2xl",
+                "bg-zinc-800"
+              )}
+            >
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="h-full w-full object-cover"
+                style={{ transform: "scaleX(-1)" }}
+              />
+              {!camEnabled && (
+                <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
+                  <VideoOff className="h-6 w-6 text-white/40" />
+                </div>
+              )}
+              {/* "You" label */}
+              <div className="absolute bottom-1 left-1 right-1">
+                <span className="text-[10px] text-white/70 bg-black/50 rounded px-1 py-0.5 truncate block text-center">
+                  You {!micEnabled && "· Muted"}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Remote name label (top-left of remote video) ──────────────────── */}
+        {remoteJoined && (
+          <div className="absolute top-4 left-4">
+            <div className="flex items-center gap-1.5 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-1.5">
+              <div className="h-2 w-2 rounded-full bg-green-400" />
+              <span className="text-xs text-white font-medium">Participant</span>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ── Bottom Toolbar ───────────────────────────────────────────────────── */}
+      <footer className="shrink-0 flex items-center justify-center gap-3 px-4 py-4 bg-zinc-900/95 border-t border-white/10 backdrop-blur-sm">
+
+        {/* Mic toggle */}
+        <Button
+          onClick={toggleMic}
+          variant="ghost"
+          size="icon"
+          disabled={!localReady}
+          title={micEnabled ? "Mute microphone" : "Unmute microphone"}
+          className={cn(
+            "h-12 w-12 rounded-full transition-all duration-200",
+            micEnabled
+              ? "bg-white/10 hover:bg-white/20 text-white"
+              : "bg-red-500/20 hover:bg-red-500/30 text-red-400 ring-1 ring-red-500/40"
+          )}
+        >
+          {micEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+        </Button>
+
+        {/* Camera toggle */}
+        <Button
+          onClick={toggleCam}
+          variant="ghost"
+          size="icon"
+          disabled={!localReady}
+          title={camEnabled ? "Turn off camera" : "Turn on camera"}
+          className={cn(
+            "h-12 w-12 rounded-full transition-all duration-200",
+            camEnabled
+              ? "bg-white/10 hover:bg-white/20 text-white"
+              : "bg-red-500/20 hover:bg-red-500/30 text-red-400 ring-1 ring-red-500/40"
+          )}
+        >
+          {camEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+        </Button>
+
+        {/* Leave */}
+        <Button
+          onClick={handleLeave}
+          title="Leave call"
+          className="h-12 w-12 sm:w-auto sm:px-6 rounded-full bg-red-600 hover:bg-red-700 text-white gap-2 transition-all duration-200 shrink-0"
+        >
+          <PhoneOff className="h-5 w-5" />
+          <span className="hidden sm:inline font-medium">Leave</span>
+        </Button>
+      </footer>
     </div>
   );
 }
