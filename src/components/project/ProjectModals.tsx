@@ -25,6 +25,7 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { ensureDefaultChatRooms } from "@/lib/chat";
 import { LoadingSpinner } from "@/components/common/LoadingSpinner";
 import { Rocket, GitBranch, CheckCircle2 } from "lucide-react";
 
@@ -198,6 +199,8 @@ export function CreateProjectModal({ open, onOpenChange }: CreateProjectModalPro
         role: "leader",
         joinedAt: serverTimestamp(),
       });
+
+      await ensureDefaultChatRooms(projectId, user.uid);
 
       // 3. Auto-generate roadmap in the background (fire-and-forget)
       //    This runs asynchronously — modal closes immediately

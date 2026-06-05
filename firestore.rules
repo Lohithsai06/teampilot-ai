@@ -118,6 +118,71 @@ service cloud.firestore {
     }
 
     // ─── githubRepositories ──────────────────────────────────────────────────
+    // Chat rooms belong to projects and are readable only by project members.
+    match /chatRooms/{roomId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth()
+        && isMember(request.resource.data.projectId);
+      allow update, delete: if isAuth()
+        && isLeader(resource.data.projectId);
+    }
+
+    // Realtime project chat messages.
+    match /messages/{messageId} {
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow list: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.senderId == request.auth.uid
+        && isMember(request.resource.data.projectId)
+        && (
+          request.resource.data.roomId != request.resource.data.projectId + "_announcements" ||
+          isLeader(request.resource.data.projectId)
+        );
+      allow update: if isAuth()
+        && resource.data.senderId == request.auth.uid
+        && isMember(resource.data.projectId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["message", "edited", "editedAt", "mentions"]);
+      allow delete: if isAuth()
+        && isMember(resource.data.projectId)
+        && (resource.data.senderId == request.auth.uid || isLeader(resource.data.projectId));
+    }
+
+    // Ephemeral typing state per room.
+    match /typingStatus/{typingId} {
+      allow list: if isAuth();
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow create, update: if isAuth()
+        && request.resource.data.userId == request.auth.uid
+        && isMember(request.resource.data.projectId);
+      allow delete: if isAuth()
+        && resource.data.userId == request.auth.uid
+        && isMember(resource.data.projectId);
+    }
+
+    // Lightweight presence and read status for the chat workspace.
+    match /chatPresence/{presenceId} {
+      allow list: if isAuth();
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow create, update: if isAuth()
+        && request.resource.data.userId == request.auth.uid
+        && isMember(request.resource.data.projectId);
+      allow delete: if false;
+    }
+
+    // Chat notifications are created by project members and read by project members.
+    match /notifications/{notificationId} {
+      allow list: if isAuth();
+      allow get: if isAuth() && isMember(resource.data.projectId);
+      allow create: if isAuth()
+        && isMember(request.resource.data.projectId);
+      allow update: if isAuth()
+        && isMember(resource.data.projectId);
+      allow delete: if isAuth()
+        && isLeader(resource.data.projectId);
+    }
+
     match /githubRepositories/{repoId} {
       allow get: if isAuth() && isMember(resource.data.projectId);
       allow list: if isAuth();
